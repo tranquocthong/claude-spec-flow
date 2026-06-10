@@ -1,0 +1,22 @@
+{
+  "name": "claude-spec-flow",
+  "owner": {
+    "name": "Travis Tran"
+  },
+  "metadata": {
+    "description": "Marketplace for spec-flow — a spec-driven workflow plugin for Claude Code.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "sf",
+      "source": "./",
+      "description": "Turn a messy SRS - or just an idea - into a reviewed Solution Design, then traceable, adaptive implementation. Spec-driven with change-driven resync/change/bug loops + branch-per-SD; bundles manual-test + commit; keyless via Task Master, no lock-in.",
+      "category": "workflow"
+    }
+  ],
+  "_notes": {
+    "standalone": "spec-flow is self-contained: one `/plugin install sf` is all a team member needs. The manual-test and commit skills ship INSIDE this plugin (skills/manual-test, skills/commit). Branch policy (1 SD = 1 branch, no commit on base) is config-driven via .spec-flow/config.json → branching. Task Master is auto-fetched at runtime via `npx -y task-master-ai` declared in .mcp.json — no manual install.",
+    "member-prereqs": "node + npm (for npx Task Master) and the Claude Code CLI. No API key needed by default — /sf:init sets Task Master to the keyless `claude-code` provider (uses your Claude Code session). An ANTHROPIC_API_KEY / PERPLEXITY_API_KEY is optional, only if a member prefers their own provider."
+  }
+}

@@ -1,0 +1,9 @@
+# per-project runtime state (created in TARGET projects, never in the plugin repo)
+.spec-flow/
+node_modules/
+*.log
+.DS_Store
+
+# Python bytecode (manual-test runner lib)
+__pycache__/
+*.pyc

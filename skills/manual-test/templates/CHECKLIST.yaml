@@ -1,0 +1,199 @@
+# Manual-test checklist boilerplate.
+# Copy to .claude/docs/manual-tests/features/<feature>/CHECKLIST.yaml and fill in.
+# See references/checklist.md for structure, references/test-rigor.md for rigor rules.
+#
+# Rigor MUST (apply to every test):
+#   1. Reach the precondition via the real entry point — not shortcut INSERT of end state.
+#      If you must shortcut, mirror ALL ambient writes (audit_log, outbox, version, ...).
+#   2. Every mutating test has a `verify` block asserting a side-effect / delta.
+#      HTTP 200 alone is never a PASS.
+#   3. Use ${TEST_CORRELATION_ID} per run — never stable IDs like TEST-001.
+#   4. Async = `poll.until` with `updated_at > ${TEST_START}` filter — never `wait_ms` alone.
+# See references/test-rigor.md for the full BAD-vs-GOOD example + SHOULD rules.
+
+config:
+  base_url: http://localhost:${SERVER_PORT:-8080}
+  db:
+    host: localhost
+    port: 5432
+    database: ${DB_NAME}
+    username: ${DB_USER:-postgres}
+    password: ${DB_PASS:-postgres}
+  redis:
+    host: localhost
+    port: 6379
+
+# Token payloads — base64-encoded at run time with `tr -d '\n'`.
+tokens:
+  user_token:
+    payload: '{"iat":1772680061,"exp":2088040061,"sub":"${USER_ID}"}'
+    note: End-user X-Userinfo token. Auto-discovered USER_ID from main entity table.
+
+  bo_admin_mode_a:
+    payload: '{"iat":1772680061,"exp":2088040061,"sub":"bo-admin","email":"bo-admin@example.com","resource_access":{"${RESOURCE_NAME}":{"roles":["${FEATURE}:${ACTION}"]}}}'
+    note: Mode A BO token. Use only if group-role-authorization=false AND Redis auth-group-role:* empty.
+
+  bo_admin_mode_b:
+    payload: '{"iat":1772680061,"exp":2088040061,"sub":"bo-admin","email":"bo-admin@example.com","role_groups":["test-admin"]}'
+    note: Mode B BO token. Requires Redis seed in setup. If Path B (Keycloak ROPC), drop this token entirely.
+
+# Reusable seed snippets, referenced from setup blocks via `seed: name`.
+seed:
+  parent_entity: |
+    INSERT INTO parent_table (id, code, status)
+    VALUES ('${PARENT_ID}', 'TEST-PARENT', 'ACTIVE')
+    ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status;
+
+  redis_group_role: |
+    redis-cli SADD "auth-group-role:test-admin" \
+      "${RESOURCE_NAME}:${FEATURE}:${ACTION}"
+    redis-cli EXPIRE "auth-group-role:test-admin" 3600
+
+# Final teardown — runs after ALL suites complete.
+cleanup:
+  all: |
+    DELETE FROM child_table WHERE ref_id LIKE 'TEST-%';
+    DELETE FROM parent_table WHERE code LIKE 'TEST-%';
+
+suites:
+  - id: example-suite
+    name: Example feature suite
+    tags: [smoke, regression]
+    setup:
+      - seed: parent_entity
+    tests:
+      # Happy-path mutating test — natural flow, correlation ID, side-effect verify, delta.
+      - id: EX-001
+        name: Submit transitions CREATED -> PENDING, emits outbox event
+        tags: [smoke]
+        setup:
+          # Reach the precondition via the real CREATE endpoint, not direct INSERT.
+          - http:
+              method: POST
+              path: /api/v1/entities
+              token: user_token
+              body: '{"correlation_id":"${TEST_CORRELATION_ID}","name":"Nguyễn Văn A"}'  # unicode in seed (SHOULD-1)
+              capture: { ENTITY_ID: "$.id" }
+          - sql: "SELECT status FROM entity WHERE id='${ENTITY_ID}'"
+            expect: CREATED                                                  # pre-state confirmed (MUST-3)
+          - sql: "SELECT now() AS ts"                                        # ${TEST_START} baseline
+        request:
+          method: POST
+          path: /api/v1/entities/${ENTITY_ID}/submit
+          token: user_token
+          body: '{"correlation_id":"${TEST_CORRELATION_ID}"}'
+        expect:
+          status: 200
+          json_path: "$.status == \"PENDING\""
+        verify:
+          - sql: "SELECT status, updated_at FROM entity WHERE id='${ENTITY_ID}'"
+            expect:
+              status: PENDING
+              updated_at: "> ${TEST_START}"                                  # delta proof (MUST-3)
+          - sql: |
+              SELECT count(*) FROM outbox_events
+              WHERE aggregate_id='${ENTITY_ID}' AND event_type='entity.submitted'
+            expect: 1                                                        # side-effect verify (MUST-2)
+          - sql: |
+              SELECT count(*) FROM audit_log
+              WHERE entity_id='${ENTITY_ID}' AND correlation_id='${TEST_CORRELATION_ID}'
+            expect: 1
+        teardown:
+          - sql: "DELETE FROM outbox_events WHERE aggregate_id='${ENTITY_ID}'"
+          - sql: "DELETE FROM audit_log WHERE entity_id='${ENTITY_ID}'"
+          - sql: "DELETE FROM entity WHERE id='${ENTITY_ID}'"
+
+      # Negative-control sibling for EX-001 (SHOULD-4) — proves the assertion can fail.
+      - id: EX-001-NEG
+        name: Submit with unknown ID -> 404, no audit/outbox row written
+        tags: [smoke]
+        request:
+          method: POST
+          path: /api/v1/entities/00000000-0000-0000-0000-000000000000/submit
+          token: user_token
+        expect:
+          status: 404
+          json_path: "$.code == \"entity.not.found\""                        # specific code, not generic substring
+        verify:
+          - sql: |
+              SELECT count(*) FROM outbox_events
+              WHERE aggregate_id='00000000-0000-0000-0000-000000000000'
+            expect: 0                                                        # no side-effect from failed call
+
+  # --- Kafka event-triggered suite ---
+  - id: example-kafka-suite
+    name: Event-triggered consumer
+    tags: [smoke, regression]
+    tests:
+      - id: KF-001
+        name: Consumer processes event, updates DB, writes audit row
+        tags: [smoke]
+        setup:
+          # Seed precondition via the real CREATE endpoint (MUST-1).
+          - http:
+              method: POST
+              path: /api/v1/entities
+              token: user_token
+              body: '{"correlation_id":"${TEST_CORRELATION_ID}","name":"O''Brien"}'
+              capture: { ENTITY_ID: "$.id" }
+          - sql: "SELECT now() AS ts"                                        # ${TEST_START}
+        request:
+          kafka:
+            topic: ${KAFKA_TOPIC:-entity.events}
+            payload: '{"id":"${ENTITY_ID}","correlationId":"${TEST_CORRELATION_ID}","status":"PROCESSED"}'
+            key: ${ENTITY_ID}
+            headers:
+              userinfo: ${BASE64_USERINFO}
+        expect:
+          poll:
+            sql: "SELECT status FROM entity WHERE id='${ENTITY_ID}' AND updated_at > '${TEST_START}'"  # timestamp filter (MUST-5)
+            until: PROCESSED
+            interval_ms: 500
+            timeout_ms: 10000
+        verify:
+          - sql: "SELECT status, updated_at FROM entity WHERE id='${ENTITY_ID}'"
+            expect:
+              status: PROCESSED
+              updated_at: "> ${TEST_START}"
+          - sql: |
+              SELECT count(*) FROM audit_log
+              WHERE entity_id='${ENTITY_ID}' AND correlation_id='${TEST_CORRELATION_ID}'
+            expect: 1
+          - kafka_consumer_lag:
+              group: ${CONSUMER_GROUP:-my-service-cg}
+              topic: ${KAFKA_TOPIC:-entity.events}
+              expect: 0
+          - kafka_dlt:
+              topic: ${KAFKA_TOPIC:-entity.events}.DLT
+              expect: empty
+        teardown:
+          - sql: "DELETE FROM audit_log WHERE entity_id='${ENTITY_ID}'"
+          - sql: "DELETE FROM entity WHERE id='${ENTITY_ID}'"
+
+      - id: KF-002
+        name: Poison-pill payload lands in DLT, entity untouched
+        tags: [regression]
+        setup:
+          - sql: "SELECT count(*) FROM entity WHERE id='${TEST_CORRELATION_ID}'"
+            capture: { ENTITY_COUNT_BEFORE: "$.count" }                      # baseline
+        request:
+          kafka:
+            topic: ${KAFKA_TOPIC:-entity.events}
+            payload: 'not-valid-json'
+            key: ${TEST_CORRELATION_ID}
+        expect:
+          poll:
+            sql: |
+              SELECT count(*) AS n FROM kafka_dlt_view
+              WHERE topic='${KAFKA_TOPIC:-entity.events}.DLT' AND key='${TEST_CORRELATION_ID}'
+            until: 1
+            interval_ms: 500
+            timeout_ms: 10000
+        verify:
+          - kafka_dlt:
+              topic: ${KAFKA_TOPIC:-entity.events}.DLT
+              last_n: 1
+              contains: "${TEST_CORRELATION_ID}"
+          - sql: "SELECT count(*) FROM entity WHERE id='${TEST_CORRELATION_ID}'"
+            expect: ${ENTITY_COUNT_BEFORE}                                   # no entity written from poison-pill
+        teardown: []   # DLT messages remain — flush manually if needed

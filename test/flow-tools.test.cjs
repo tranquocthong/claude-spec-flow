@@ -1,0 +1,188 @@
+/**
+ * Engine test net for bin/flow-tools.cjs — zero-dep (node:test + node:assert).
+ *
+ * Behavioral: every case runs the real CLI (`node flow-tools.cjs <cmd>`) in a
+ * throwaway temp project and asserts on the JSON Result contract. The engine has
+ * no exports / require.main guard (it runs main() on load), so the CLI is the only
+ * seam — which is also exactly the interface every /sf:* flow uses.
+ *
+ * Dev tooling — NOT loaded at runtime; not part of the plugin's behavior.
+ * Run:  node --test test/flow-tools.test.cjs
+ */
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const ENGINE = path.join(__dirname, '..', 'bin', 'flow-tools.cjs');
+
+/** Run the engine; return the parsed Result even when it exits non-zero (ok:false). */
+function run(args, cwd) {
+  let out;
+  try {
+    out = execFileSync('node', [ENGINE, ...args], { cwd, encoding: 'utf8' });
+  } catch (e) {
+    if (e.stdout) out = String(e.stdout);
+    else throw e;
+  }
+  const lastLine = out.trim().split('\n').pop();
+  return JSON.parse(lastLine);
+}
+
+function tmpProject() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-test-'));
+  return dir;
+}
+
+function initProject(dir) {
+  const r = run(['init-project', '--stack', 'node'], dir);
+  assert.equal(r.ok, true, 'init-project should succeed');
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch / contract
+// ---------------------------------------------------------------------------
+
+test('unknown command → ok:false UNKNOWN_COMMAND', () => {
+  const dir = tmpProject();
+  const r = run(['no-such-cmd'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /UNKNOWN_COMMAND/);
+});
+
+test('no command → ok:false NO_COMMAND', () => {
+  const dir = tmpProject();
+  const r = run([], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /NO_COMMAND/);
+});
+
+// ---------------------------------------------------------------------------
+// Happy-path smoke across the main commands
+// ---------------------------------------------------------------------------
+
+test('init-project seeds .spec-flow/config.json', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  assert.ok(fs.existsSync(path.join(dir, '.spec-flow', 'config.json')), 'config.json written');
+});
+
+test('doctor / status-report return a well-formed Result (no INTERNAL)', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  for (const cmd of ['doctor', 'status-report']) {
+    const r = run([cmd], dir);
+    assert.equal(typeof r.ok, 'boolean', `${cmd} returns a Result`);
+    if (!r.ok) assert.doesNotMatch(r.error, /^INTERNAL/, `${cmd} must not throw INTERNAL`);
+  }
+});
+
+test('bug-new then bug-list reflects the new record', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const created = run(['bug-new', '--desc', 'login 500 on empty body', '--severity', 'high'], dir);
+  assert.equal(created.ok, true, 'bug-new ok');
+  const list = run(['bug-list'], dir);
+  assert.equal(list.ok, true, 'bug-list ok');
+  const blob = JSON.stringify(list.data);
+  assert.match(blob, /login 500 on empty body/, 'new bug appears in bug-list');
+});
+
+test('epic-new then epic-list ok', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const created = run(['epic-new', '--name', 'payments', '--subs', 'transfer,refund'], dir);
+  assert.equal(created.ok, true, 'epic-new ok');
+  const list = run(['epic-list'], dir);
+  assert.equal(list.ok, true, 'epic-list ok');
+});
+
+// ---------------------------------------------------------------------------
+// Regression — Phase 4 fixes (these would FAIL against the pre-v0.0.44 engine)
+// ---------------------------------------------------------------------------
+
+test('REGRESSION sd-skeleton: English "Non-Functional Requirements" heading is harvested (not dropped)', () => {
+  // Pre-fix bug: the `detail` regex matched the "functional requirement" substring
+  // inside "Non-Functional Requirements", so the NFR heading was misclassified and
+  // its table silently dropped (stats.nfr === 0).
+  const dir = tmpProject();
+  const srs = path.join(dir, 'srs.md');
+  fs.writeFileSync(srs, [
+    '# Feature: Demo',
+    '',
+    '## 6. Non-Functional Requirements',
+    '',
+    '| Requirement | Category | Note |',
+    '| --- | --- | --- |',
+    '| p95 latency under 200ms | Perf | |',
+    '| TLS 1.2+ required | Security | |',
+    '',
+  ].join('\n'));
+  const r = run(['sd-skeleton', '--srs', srs, '--feature', 'demo', '--dry-run'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.stats.nfr, 2, 'both NFR rows harvested (would be 0 with the misclassification bug)');
+});
+
+test('REGRESSION trace-build: §13.2 "Expected" resolved by header on a 6-col table', () => {
+  // Pre-fix bug: trace-build read `expected` positionally as r[3], which is the
+  // "Input/Condition" column on the 6-col sd-author-enriched table.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo',
+    '',
+    '## 5.1 Functional Requirements',
+    '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns a JWT | Must Have | US-1 |',
+    '',
+    '## 13.2 Test Cases',
+    '',
+    '| TC ID | Flow | Test Case | Input/Condition | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- | --- |',
+    '| TC-001 | Login | valid creds login | POST /auth/login valid creds | JWT returned, status 200 | FR-001 |',
+    '',
+  ].join('\n'));
+  const r = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'trace-build ok');
+  assert.equal(r.data.counts.tc, 1, 'one TC node');
+  const trace = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'trace.json'), 'utf8'));
+  assert.equal(
+    trace.nodes.tc[0].expected,
+    'JWT returned, status 200',
+    'expected = the "Expected Result" column (col 4), not "Input/Condition" (col 3)'
+  );
+});
+
+test('REGRESSION branch-ensure: git repo with no commits → NO_COMMITS (not NOT_A_GIT_REPO)', () => {
+  const dir = tmpProject();
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  initProject(dir);
+  const r = run(['branch-ensure', '--kind', 'sd', '--name', 'demo'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /^NO_COMMITS/, 'fresh repo with no HEAD reports NO_COMMITS');
+});
+
+// ---------------------------------------------------------------------------
+// Clobber-safety
+// ---------------------------------------------------------------------------
+
+test('sd-skeleton refuses to overwrite an existing SD without --force', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const srs = path.join(dir, 'srs.md');
+  fs.writeFileSync(srs, '# Feature: Demo\n\n## 6. Non-Functional Requirements\n\n| Requirement | Category | Note |\n| --- | --- | --- |\n| fast | Perf | |\n');
+  const first = run(['sd-skeleton', '--srs', srs, '--feature', 'demo'], dir);
+  assert.equal(first.ok, true, 'first write ok');
+  const second = run(['sd-skeleton', '--srs', srs, '--feature', 'demo'], dir);
+  assert.equal(second.ok, false);
+  assert.match(second.error, /SD_EXISTS/, 'second run without --force is blocked');
+  const forced = run(['sd-skeleton', '--srs', srs, '--feature', 'demo', '--force'], dir);
+  assert.equal(forced.ok, true, '--force re-derives');
+});
