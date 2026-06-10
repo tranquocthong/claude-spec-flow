@@ -2,8 +2,8 @@
 # api.sh — auto-auth curl wrapper. The "lazy mode" entry point.
 #
 # Usage:
-#   scripts/api.sh GET  /api/v1/wallet/accounts
-#   scripts/api.sh POST /api/v1/wallet/transfers/preview -d '{"amount":100}'
+#   scripts/api.sh GET  /api/v1/accounts
+#   scripts/api.sh POST /api/v1/transfers/preview -d '{"amount":100}'
 #   scripts/api.sh GET  /bo/api/v1/transactions -q 'page=0&size=5'
 #   scripts/api.sh GET  /internal/api/v1/...      # auto skips auth
 #   scripts/api.sh PRIME [--refresh]              # one-shot discovery & cache (reads PROJECT_CONTEXT.yaml if fresh)

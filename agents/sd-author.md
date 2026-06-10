@@ -58,7 +58,7 @@ Link each TC to its FR row and update `TC-xxx` IDs sequentially.
 
 ### C. Derive §12.2 Domain Error Codes from failure rules
 For each failure path from step B, ensure a §12.2 row exists:
-- `Error Code`: `ERR_<DOMAIN>_<NNN>` (e.g. `ERR_WALLET_BALANCE_001`).
+- `Error Code`: `ERR_<DOMAIN>_<NNN>` (e.g. `ERR_ORDER_NOTFOUND_001`).
 - `HTTP`: 422 business-rule violations, 409 conflicts, 404 not-found, 401/403 auth.
 - `Trigger`: precise condition from the BL rule.
 - `User Message`: short, user-facing (Vietnamese if SRS is Vietnamese). Do NOT leave as `TODO:MANUAL-REVIEW` unless the SRS gives no hint — the BL rule trigger is usually enough.
