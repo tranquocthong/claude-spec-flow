@@ -66,7 +66,11 @@ With a file path given, skip Mode 0 and go straight to the Steps.
    Check `data.warnings` in the result: if `epicScale: true`, surface the warning to the user and note the two options — (a) split into sub-feature SDs (each its own SD, linked via trace.json), or (b) have sd-author author section-by-section.
 
 4. **Pass-2 — spawn sd-author**
-   Spawn **sd-author** with: SRS path + SD draft from step 3 + `CONTEXT.md` (if present) + `--type`.
+   First read `config.language` (default `en`):
+   ```
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs status-report   # or grep "language" .spec-flow/config.json
+   ```
+   Spawn **sd-author** with: SRS path + SD draft from step 3 + `CONTEXT.md` (if present) + `--type` **+ an explicit first line of the spawn prompt: `Author all SD/CONTEXT prose in language: <config.language>` (e.g. `vi`).** Pass this even though sd-author also reads `config.json` — surfacing it explicitly is what makes the language actually take effect (a buried rule the sub-agent may skip is not enough). If `config.language` is `en`, no directive needed.
 
    sd-author will:
    - Merge fragmented/list-intro FR rows into atomic requirements; drop non-requirements.

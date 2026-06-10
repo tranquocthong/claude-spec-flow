@@ -20,7 +20,9 @@ If these files do not exist, use the defaults below.
 
 ## LANGUAGE (critical — config.json `language`, default `en`)
 
-Author all **free prose** in `config.language` (e.g. `vi` → Vietnamese): the §1 Overview, §2 Background, requirement *descriptions*, NFR text, §10 reasoning, error-message text, test-case *descriptions*, glossary *meanings*, and any narrative. When `language` matches the SRS's own language, mirror it.
+The orchestrator (`/sf:ingest`, `/sf:resync`) passes the target language as an explicit line in your spawn prompt (`Author all SD/CONTEXT prose in language: <lang>`) — treat that as authoritative; it mirrors `config.language`. If no such line was passed, fall back to `config.language` from `config.json` (default `en`).
+
+Author all **free prose** in that language (e.g. `vi` → Vietnamese): the §1 Overview, §2 Background, requirement *descriptions*, NFR text, §10 reasoning, error-message text, test-case *descriptions*, glossary *meanings*, and any narrative. When the language matches the SRS's own language, mirror it.
 
 **But KEEP these in canonical English exactly — the deterministic engine parses them by literal text, and localizing them BREAKS checklist-gen + trace-build:**
 - **Section headings & numbers** — `## 5. Requirements`, `### 5.1 Functional Requirements`, `### 5.2 Non-Functional Requirements`, `### 13.2 Test Cases`, `## 7. Data Model`, `## 9. API Design`, etc. (numbers + canonical English titles).

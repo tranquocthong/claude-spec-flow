@@ -19,7 +19,7 @@ Input: `$ARGUMENTS` (all optional; spec-flow auto-detects project name from the 
    - **Tiếng Việt** → `--language vi`
    - (Other) → pass the user's value as `--language <code>`
 
-   This sets `config.language`, which the **sd-author** agent reads to author the SD/CONTEXT **prose** in that language. Note (tell the user): only narrative prose + table-cell content is localized; section headings, table column headers, IDs (`FR-`/`TC-`), and code identifiers stay canonical English so the engine can still parse the SD — and `/sf:*` command output stays English (short/technical). Editable later in `.spec-flow/config.json` → `language`.
+   This sets `config.language`. Two effects when it's not `en`: (1) the **sd-author** agent authors SD/CONTEXT **prose** in that language; (2) the anchor hook makes the **session itself respond in that language** during `/sf:*` work. In both cases only narrative prose + table-cell content is localized — section headings, table column headers, IDs (`FR-`/`TC-`), and code identifiers stay canonical English so the engine can still parse the SD. Editable later in `.spec-flow/config.json` → `language`.
 
 2. **Bootstrap the project profile** (append `--no-commit-docs` ONLY if the user chose "Keep local"; append `--language <code>` from step 1b):
    ```
