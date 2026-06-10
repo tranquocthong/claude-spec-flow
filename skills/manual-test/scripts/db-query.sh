@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # db-query.sh — 1-shot Postgres query with auto-discovered creds.
 # Usage:
-#   scripts/db-query.sh "SELECT * FROM wallet_accounts LIMIT 1"
+#   scripts/db-query.sh "SELECT * FROM accounts LIMIT 1"
 #   scripts/db-query.sh -d other_db "SELECT 1"           # override DB
 #   scripts/db-query.sh -f path/to/file.sql              # run file
 #   scripts/db-query.sh -t "SELECT ..."                  # tuples-only (no headers)

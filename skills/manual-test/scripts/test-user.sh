@@ -8,7 +8,7 @@
 #   4. Cache into state.json: test_user.{id, username, password}
 #
 # Project-specific knobs (via env or args):
-#   TEST_USER_TABLE       SQL table to scan (default: auto-detect among wallet_accounts, accounts, users, user, party, customer)
+#   TEST_USER_TABLE       SQL table to scan (default: auto-detect among accounts, users, user, party, customer)
 #   TEST_USER_ID_COL      Column holding the user-id UUID (default: user_id)
 #   TEST_USER_FILTER      Extra WHERE clause (default: status='ACTIVE')
 #   KC_URL                Keycloak base URL (default: http://localhost:8180)
@@ -48,7 +48,7 @@ COL="${TEST_USER_ID_COL:-user_id}"
 FILTER="${TEST_USER_FILTER:-status='ACTIVE'}"
 
 if [ -z "$TABLE" ]; then
-  for cand in wallet_accounts accounts users user party customers customer; do
+  for cand in accounts users user party customers customer; do
     EXISTS=$(PSQL -c "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='$cand'" 2>/dev/null)
     if [ -n "$EXISTS" ]; then
       # Check if column exists too
