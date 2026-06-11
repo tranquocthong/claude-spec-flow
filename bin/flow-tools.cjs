@@ -1086,7 +1086,9 @@ const commands = {
       tasksPath = candidates.find(c => fs.existsSync(c)) || null;
     }
     if (tasksPath && fs.existsSync(tasksPath)) {
-      const rawTasks = readTmTasks(readJsonSafe(tasksPath, null));
+      // Scope to THIS feature's tag — never fall back to master/first-tag, which
+      // would miscount (the currentTag-drift symptom: counts read another feature's tasks).
+      const rawTasks = readTmTasks(readJsonSafe(tasksPath, null), feature);
       taskNodes = rawTasks.map(t => ({
         id: String(t.id || ''),
         title: String(t.title || ''),
@@ -1555,7 +1557,7 @@ const commands = {
     // Derive blockers (tasks in review state hint at potential blockers)
     const blockers = [];
     if (tmTasks) {
-      const rawTasks = readTmTasks(tmTasks);
+      const rawTasks = readTmTasks(tmTasks, featureName === 'unknown' ? undefined : featureName);
       for (const t of rawTasks) {
         if (t.status === 'review' || t.status === 'blocked') {
           blockers.push(`task #${t.id} "${t.title || ''}" [${t.status}]`);
@@ -2164,7 +2166,10 @@ const commands = {
         makeCheck('secret-scan', 'skipped', 'No verify block in .spec-flow/config.json', null),
       ];
       const summary = { ok: 0, warn: 0, fail: 0, skipped: 4 };
-      return ok({ checks, summary, gate: 'pass', note: 'verify not configured — skipped gracefully. Run /sf:init to configure.' });
+      // gate: 'skipped' — NOT 'pass'. A no-op gate must not masquerade as a passed
+      // gate (transparency): nothing was actually verified. The caller treats
+      // 'skipped' distinctly (warn, do not claim the code was verified).
+      return ok({ checks, summary, gate: 'skipped', note: 'verify not configured — nothing checked. Re-run /sf:init with --stack <stack> to seed a real verify preset.' });
     }
 
     const {
@@ -2390,7 +2395,10 @@ const commands = {
     // ---- summary + gate ---------------------------------------------------
     const summary = { ok: 0, warn: 0, fail: 0, skipped: 0 };
     for (const c of checks) summary[c.status] = (summary[c.status] || 0) + 1;
-    const gate = summary.fail > 0 ? 'fail' : 'pass';
+    // 'skipped' when nothing actually ran (all checks skipped) — don't let a no-op
+    // gate read as 'pass'. 'fail' on any failure; else 'pass' if at least one real check ran.
+    const ran = summary.ok + summary.warn + summary.fail;
+    const gate = summary.fail > 0 ? 'fail' : (ran === 0 ? 'skipped' : 'pass');
 
     return ok({ checks, summary, gate });
   },

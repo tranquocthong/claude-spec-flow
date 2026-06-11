@@ -68,7 +68,7 @@ If impact spans multiple nodes, or you're unsure, run the full steps below.
 5. **Re-implement**
    Run `/sf:phase` over the `review` tasks:
    - `route --sd .spec-flow/specs/<feature>/SD.md` routes each affected FR to fast/expand/deep.
-   - Executor edits code; `mcp__task-master-ai__update_subtask` logs files/approach/result.
+   - Executor edits code; logs files/approach/result via CLI `task-master update-task --id=<id> --append` (not `update-subtask` — it needs a `parent.sub` id and fails for un-expanded tasks).
    - `mcp__task-master-ai__set_task_status` → `review` after each code change.
    - Manual-test gate (step 6) before each task advances to `done`.
 

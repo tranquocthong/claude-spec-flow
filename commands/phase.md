@@ -31,8 +31,11 @@ Check the feature's task space first (state op, no provider): `mcp__task-master-
 ```
 npx -y -p task-master-ai@0.43.1 task-master parse-prd --input .spec-flow/specs/<feature>/SD.md --tag <feature>
 npx -y -p task-master-ai@0.43.1 task-master analyze-complexity --tag <feature> --research
+npx -y -p task-master-ai@0.43.1 task-master use-tag <feature>
 ```
 Use a **per-feature `--tag`** so this feature's tasks stay isolated. Only if the CLI genuinely errors on a missing provider/key do you ask the user to run these two lines in their terminal.
+
+> **CRITICAL — set the global current tag (`use-tag`).** Task Master MCP state ops (`next_task`, `set_task_status`, `update-subtask`) bind to the **global `currentTag`** in `tasks.json` and may **ignore** a per-call `tag:` param. If `currentTag` still points at a prior feature, every state op silently operates on the wrong tag — executors fail to log ("wrong tag … requires parentId.subtaskId"), and trace counts read another feature's tasks. So **always run `use-tag <feature>` right after seeding** (and again on resume if you switched features) so `currentTag` == this feature. The engine's `trace-build`/`trace-link`/`state-update`/`status-report` are already tag-scoped via `--feature` and do not depend on `currentTag`.
 
 ## Step 0.5 — Confirm the task list (gate: `config.phase.confirmTasks`, default true)
 
@@ -64,9 +67,10 @@ Returns per-FR complexity scores (1–10):
 
 3. **Code + log**
    ```
-   npx -y -p task-master-ai@0.43.1 task-master update-subtask --id=<id> --prompt="<files/approach/result>"   # AI op → CLI
-   mcp__task-master-ai__set_task_status --id=<id> --status=review                                              # state op → MCP
+   npx -y -p task-master-ai@0.43.1 task-master update-task --id=<id> --append --prompt="<files/approach/result>"   # AI op → CLI
+   mcp__task-master-ai__set_task_status --id=<id> --status=review                                                  # state op → MCP
    ```
+   Use **`update-task --append`** (logs onto the task itself), NOT `update-subtask --id=<id>`: `update-subtask` requires a `parent.sub` id and fails for any task that was not expanded into subtasks (the common solo/fast-path case — "requires parentId.subtaskId"). `--append` works for both expanded and un-expanded tasks.
    If executor did not call `trace-link`, run it from the executor's reported file list:
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-link \
@@ -82,17 +86,21 @@ Returns per-FR complexity scores (1–10):
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code [--feature <feature>]
    ```
-   Parse returned JSON: `gate: "fail"` → `set_task_status` → `review`; surface `detail` and `fix`; **halt**.
-   `gate: "pass"` (including all-skipped when unconfigured) → proceed to step 5.
-   Generic and config-driven — Java teams configure gradle + forbidden patterns; a project with no verify block skips without blocking.
+   Parse returned JSON:
+   - `gate: "fail"` → `set_task_status` → `review`; surface `detail` and `fix`; **halt**.
+   - `gate: "pass"` → at least one real check ran and none failed → proceed to step 5.
+   - `gate: "skipped"` → **nothing was actually verified** (no `verify` block configured). Do NOT report the code as verified. Surface the `note` to the user once ("verify not configured — the automated gate checked nothing; re-run `/sf:init --stack <stack>` to seed a real preset"), then proceed (it does not block — but it is honestly a no-op, not a pass).
+   Generic and config-driven — Java teams configure gradle + forbidden patterns; a project with no verify block is `skipped` (surfaced as a no-op), never a silent pass.
 
-5. **Manual-test gate**
+5. **Manual-test gate** — applies to tasks that expose a testable surface.
    ```
    scripts/api.sh PRIME --auto
    scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag smoke
    ```
    - exit 0 → proceed to step 6.
    - non-zero → `set_task_status` → `review`; surface FAIL lines; **halt**.
+
+   **Defer smoke when the task has no HTTP surface yet.** Background/infrastructure tasks (a DB migration, a service/repository wired but not yet exposed, an internal filter, a consumer with no running broker) have nothing to smoke — and the service may not even be running. Do NOT fabricate a smoke pass and do NOT block on an N/A gate. Instead: complete the task on **build + unit-test** evidence (the `verify-code` gate + the executor's TDD test), note "smoke deferred — no endpoint yet", and let the smoke run land on the later task that exposes the endpoint (or at the close-out **regression** sweep, which runs the full checklist once the surface exists). The rule the gate protects — "nothing claimed done without a real check" — is satisfied by the unit/build evidence now and the deferred e2e smoke later; it is not satisfied by pretending a no-surface task smoked.
 
 6. **Close task + sync state**
    ```
@@ -132,7 +140,7 @@ Returns per-FR complexity scores (1–10):
 
 ## Pipeline recap
 ```
-route --sd → next_task → hybrid-executor → update_subtask → set_status(review)
-  → verify-code (skips if unconfigured) → PRIME → run-checklist smoke → state-update (per task)
+parse-prd → use-tag → route --sd → next_task → hybrid-executor → update-task --append → set_status(review)
+  → verify-code (skipped=no-op if unconfigured) → PRIME → run-checklist smoke (deferrable if no surface) → state-update (per task)
   → run-checklist regression → verify-collect → VERIFICATION.md → state-update (phase)
 ```

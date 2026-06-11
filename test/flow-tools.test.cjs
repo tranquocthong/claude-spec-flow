@@ -186,3 +186,44 @@ test('sd-skeleton refuses to overwrite an existing SD without --force', () => {
   const forced = run(['sd-skeleton', '--srs', srs, '--feature', 'demo', '--force'], dir);
   assert.equal(forced.ok, true, '--force re-derives');
 });
+
+// ---------------------------------------------------------------------------
+// Per-feature tag scoping + honest gate (v0.1.3 regressions)
+// ---------------------------------------------------------------------------
+
+test('REGRESSION trace-build: task count is scoped to --feature tag, not master/first-tag', () => {
+  // Pre-fix bug (currentTag drift): trace-build read tasks without the feature
+  // tag, so readTmTasks fell back to master/first-tag and miscounted (the
+  // 64->11->66 symptom). A tagged tasks.json must count ONLY the feature's tasks.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | does a thing | Must Have | US-1 |', '',
+  ].join('\n'));
+  // Tagged tasks.json: master/other tag has 3 tasks, the demo tag has 2.
+  const tmDir = path.join(dir, '.taskmaster', 'tasks');
+  fs.mkdirSync(tmDir, { recursive: true });
+  fs.writeFileSync(path.join(tmDir, 'tasks.json'), JSON.stringify({
+    'sof-card-network': { tasks: [{ id: 1 }, { id: 2 }, { id: 3 }] },
+    demo: { tasks: [{ id: 1 }, { id: 2 }] },
+  }));
+  const r = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'trace-build ok');
+  assert.equal(r.data.counts.tasks, 2, 'counts the demo tag (2), not sof-card-network (3) or a sum');
+});
+
+test('REGRESSION verify-code: unconfigured project → gate "skipped", not "pass"', () => {
+  // Pre-fix bug: a no-op gate returned gate:"pass" and read as if the code was
+  // verified. With no verify block it must report "skipped" (transparency).
+  const dir = tmpProject();
+  // No init-project → no config.json at all → no verify block.
+  const r = run(['verify-code'], dir);
+  assert.equal(r.ok, true, 'verify-code never throws');
+  assert.equal(r.data.gate, 'skipped', 'unconfigured gate is skipped, not pass');
+});

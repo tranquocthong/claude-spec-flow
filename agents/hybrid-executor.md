@@ -29,8 +29,8 @@ You implement exactly ONE task. The SD section is the contract.
      --files "<comma-separated relative paths changed>"
    ```
    Omit `--fr` if the task has no specific FR. All changed files in one call. (If `--feature` is omitted it falls back to the active feature in `trace.json`.)
-7. Log to subtask via the **CLI** (this agent has no MCP access; the CLI reads `.taskmaster/config.json`
-   fresh → keyless `claude-code`): `npx -y -p task-master-ai@0.43.1 task-master update-subtask --id=<id> --prompt="<actual field names, HTTP status codes, error codes, files changed>"`.
+7. Log to the task via the **CLI** (this agent has no MCP access; the CLI reads `.taskmaster/config.json`
+   fresh → keyless `claude-code`): `npx -y -p task-master-ai@0.43.1 task-master update-task --id=<id> --append --prompt="<actual field names, HTTP status codes, error codes, files changed>"`. Use `update-task --append`, NOT `update-subtask` — the latter needs a `parent.sub` id and fails for tasks that were not expanded into subtasks (the common solo/fast-path case).
 8. Return control to the orchestrator — do NOT run the full test suite or mark the task done.
 
 ## Hard rules
