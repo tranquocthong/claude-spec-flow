@@ -328,3 +328,31 @@ test('REGRESSION B4: srs-diff picks the latest snapshot of THE FEATURE by versio
   assert.ok(addedUs.includes('US-3'), 'US-3 is new');
   assert.ok(!addedUs.includes('US-2'), 'US-2 already in demo-002 → not added (proves demo-002 was the baseline, not demo-001)');
 });
+
+test('verify-collect reads the runner JSON result line (human summary above it)', () => {
+  const dir = tmpProject();
+  const results = path.join(dir, 'out.txt');
+  // Mirrors run-checklist.sh --json: human summary, then a final JSON line.
+  fs.writeFileSync(results, [
+    '── summary ──',
+    '  total: 2',
+    '  passed: 1',
+    '  failed: 1',
+    '{"passed":["TC-001"],"failed":[{"id":"TC-002","reason":"status 500"}]}',
+  ].join('\n'));
+  const r = run(['verify-collect', '--results', results], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.status, 'failed');
+  assert.deepEqual(r.data.passed, ['TC-001']);
+  assert.equal(r.data.failed[0].id, 'TC-002');
+  assert.deepEqual(r.data.truths, ['TC-001: verified']);
+});
+
+test('verify-collect errors clearly when there is no JSON result line', () => {
+  const dir = tmpProject();
+  const results = path.join(dir, 'out.txt');
+  fs.writeFileSync(results, '── summary ──\n  passed: 0\n(no machine line)\n');
+  const r = run(['verify-collect', '--results', results], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /NO_JSON_RESULTS/);
+});

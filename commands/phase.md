@@ -124,16 +124,16 @@ Returns per-FR complexity scores (1–10):
 
 0. **Reconcile lingering `review` tasks.** Tasks land in `review` (step 5) and only flip to `done` in step 6. If work was completed outside this loop (a prior session, a manual/live verify), tasks can sit stuck in `review` — and `next_task` will NOT return them, so re-running `/sf:phase` does nothing for them. After the regression sweep below passes, **confirm with the user** then `set_task_status --status=done` for every `review` task whose behavior the regression covers (decision stays the user's — parallels bug/change close-out; never auto-close silently). `status-report` flags this state ("N task(s) in review — reconcile").
 
-1. **Regression sweep**
+1. **Regression sweep** — pass `--json` so the runner emits a machine-readable result line for `verify-collect`, and capture it:
    ```
-   scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag regression
+   scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag regression --json | tee .spec-flow/specs/<feature>/regression-results.txt
    ```
 
 2. **Collect results into VERIFICATION.md**
    ```
-   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-collect --results <runner-output.json>
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-collect --results .spec-flow/specs/<feature>/regression-results.txt
    ```
-   Append `truths[]` to `VERIFICATION.md must_haves.truths`. `VERIFICATION.md status: passed` only when zero regression failures.
+   `verify-collect` reads the runner's final `{passed,failed}` JSON line (it errors `NO_JSON_RESULTS` if you forgot `--json`). Append `truths[]` to `VERIFICATION.md must_haves.truths`. `VERIFICATION.md status: passed` only when zero regression failures.
 
 3. **Final state sync**
    ```

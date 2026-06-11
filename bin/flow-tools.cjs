@@ -1459,9 +1459,10 @@ const commands = {
 
   // -----------------------------------------------------------------------
   // verify-collect  --results <file>
-  // Parse checklist runner output (JSON or text) and produce a structured
-  // object for VERIFICATION.md truths[].
-  // Output format mirrors _checklist_runner.py / run-checklist.sh output.
+  // Consume the runner's JSON result and produce truths[] for VERIFICATION.md.
+  // The runner (run-checklist.sh --json) emits a final line:
+  //   {"passed":["TC-001",...],"failed":[{"id":"TC-002","reason":"..."}]}
+  // Accepts a whole-file JSON object too. Run the runner with --json.
   // -----------------------------------------------------------------------
   'verify-collect'(args) {
     const resultsFile = args.results;
@@ -1471,67 +1472,26 @@ const commands = {
     let raw;
     try { raw = fs.readFileSync(resultsFile, 'utf8'); } catch (e) { return err(`READ_FAILED: ${e.message}`); }
 
-    const passed = [];
-    const failed = [];
-
-    // Try JSON first: accept { passed: [], failed: [], ... } or array of test results
-    const asJson = readJsonSafe(resultsFile, null);
-    if (asJson && typeof asJson === 'object' && !Array.isArray(asJson) && (asJson.passed || asJson.failed)) {
-      // Pre-structured JSON — absorb directly
-      for (const id of (asJson.passed || [])) passed.push(String(id));
-      for (const f of (asJson.failed || [])) {
-        if (typeof f === 'string') failed.push({ id: f, reason: 'unknown' });
-        else failed.push({ id: String(f.id || f), reason: String(f.reason || 'unknown') });
-      }
-    } else {
-      // Parse _checklist_runner.py text output.
-      // Patterns:
-      //   "  TC-001  POST /api/..."  (test start line)
-      //   "    ✓ PASS  status=200"
-      //   "    ✗ FAIL"
-      //   "      <reason lines>"
-      //   "── suite: suite-1 ──"
+    // Whole-file JSON, else the last line that parses as a results object (the
+    // runner prints its human summary first, then a final JSON line under --json).
+    const looksLikeResults = (o) => o && typeof o === 'object' && !Array.isArray(o) && (o.passed || o.failed);
+    let data = readJsonSafe(resultsFile, null);
+    if (!looksLikeResults(data)) {
+      data = null;
       const lines = raw.split(/\r?\n/);
-      let currentId = null;
-      let failReasons = [];
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        // Test start: "  TC-001  METHOD /path"
-        const testStart = line.match(/^\s{2}([A-Za-z][A-Za-z0-9_-]*)\s+(?:GET|POST|PUT|DELETE|PATCH|HEAD)/);
-        if (testStart) {
-          // Flush previous if needed
-          if (currentId && !passed.includes(currentId) && !failed.find(f => f.id === currentId)) {
-            // unclosed (no pass/fail line yet) — skip
-          }
-          currentId = testStart[1];
-          failReasons = [];
-          continue;
-        }
-        // PASS line
-        if (/✓\s*PASS/i.test(line)) {
-          if (currentId) { passed.push(currentId); currentId = null; }
-          continue;
-        }
-        // FAIL line
-        if (/✗\s*FAIL/i.test(line)) {
-          if (currentId) {
-            // Gather reason lines (indented further) until next test or summary
-            const reasonLines = [];
-            let j = i + 1;
-            while (j < lines.length && /^\s{4,}/.test(lines[j]) && !/^\s{2}[A-Za-z]/.test(lines[j])) {
-              const rl = lines[j].trim();
-              if (rl) reasonLines.push(rl);
-              j++;
-            }
-            failed.push({ id: currentId, reason: reasonLines.join('; ') || 'FAIL' });
-            i = j - 1;
-            currentId = null;
-          }
-          continue;
-        }
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const t = lines[i].trim();
+        if (!t.startsWith('{')) continue;
+        try { const o = JSON.parse(t); if (looksLikeResults(o)) { data = o; break; } } catch {}
       }
     }
+    if (!data) {
+      return err('NO_JSON_RESULTS: no {passed,failed} JSON found — run the checklist with `run-checklist.sh ... --json` so the runner emits a machine-readable result line.');
+    }
+
+    const passed = (data.passed || []).map(String);
+    const failed = (data.failed || []).map(f =>
+      typeof f === 'string' ? { id: f, reason: 'unknown' } : { id: String(f.id || f), reason: String(f.reason || 'unknown') });
 
     const status = failed.length === 0 ? 'passed' : 'failed';
     const truths = passed.map(id => `${id}: verified`);

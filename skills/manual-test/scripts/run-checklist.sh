@@ -33,8 +33,10 @@
 # are auto-injected. Extend the grammar in checklist_lib/, not by inventing new YAML shapes.
 #
 # Usage:
-#   run-checklist.sh <feature> [--tag smoke|regression|...] [--id TEST-ID]
+#   run-checklist.sh <feature> [--tag smoke|regression|...] [--id TEST-ID] [--json]
 #   run-checklist.sh <path/to/CHECKLIST.yaml> [--tag smoke]
+#   --json → also print a final {"passed":[...],"failed":[{id,reason}]} line
+#            (for `flow-tools verify-collect`; the human summary still prints above it)
 #
 # Env:
 #   BASE_URL   override base_url (default from checklist.config.base_url)
@@ -53,10 +55,12 @@ fi
 ARG="$1"; shift || true
 TAG_FILTER=""
 ID_FILTER=""
+JSON_OUT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tag) TAG_FILTER="$2"; shift 2 ;;
     --id)  ID_FILTER="$2";  shift 2 ;;
+    --json) JSON_OUT="1"; shift ;;
     *) err "unknown arg: $1"; exit 2 ;;
   esac
 done
@@ -86,4 +90,5 @@ exec python3 "$SCRIPT_DIR/_checklist_runner.py" \
   ${TAG_FILTER:+--tag "$TAG_FILTER"} \
   ${ID_FILTER:+--id "$ID_FILTER"} \
   ${BASE_URL:+--base-url "$BASE_URL"} \
-  ${DRY_RUN:+--dry-run}
+  ${DRY_RUN:+--dry-run} \
+  ${JSON_OUT:+--json}

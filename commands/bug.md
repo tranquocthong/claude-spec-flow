@@ -110,19 +110,19 @@ Log the fix attempt in "## Resolution log:" with a timestamp and summary of chan
 ## STEP 5 — VERIFY (repro test must PASS)
 
 ```bash
-scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --id <bug-id>
+scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --id <bug-id> --json | tee .spec-flow/specs/<feature>/bug-<bug-id>-results.txt
 ```
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-collect \
-  --results <runner-output.json>
+  --results .spec-flow/specs/<feature>/bug-<bug-id>-results.txt
 ```
 
 **Still FAILING** → append failure to "Resolution log:", loop back to STEP 4a.
 
 **PASSING** → run broader regression:
 ```bash
-scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag regression
+scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag regression --json | tee .spec-flow/specs/<feature>/regression-results.txt
 ```
 
 ---
@@ -139,7 +139,7 @@ scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag regress
 3. Append truths to `VERIFICATION.md`:
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-collect \
-     --results <runner-output.json>
+     --results .spec-flow/specs/<feature>/regression-results.txt
    ```
    Append `truths[]` to `must_haves.truths`.
 4. Refresh state:

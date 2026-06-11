@@ -74,11 +74,11 @@ If impact spans multiple nodes, or you're unsure, run the full steps below.
 
 6. **Re-verify**
    ```
-   scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag smoke
+   scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag smoke --json | tee .spec-flow/specs/<feature>/change-results.txt
    ```
-   On PASS, collect results:
+   On PASS, collect results (`verify-collect` reads the runner's `--json` result line):
    ```
-   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-collect --results <runner-output.json>
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-collect --results .spec-flow/specs/<feature>/change-results.txt
    ```
    - **Still failing** → loop back to step 2 (update SD → re-trace → re-implement → re-verify). Record each iteration in the change `.md`.
    - **PASS** → **confirm the close with the user** (the user is the source of truth for "done"). Announce + ask, right now in this session: *`change-<id>` — verified green. Close it (`status: active` → `done`), or keep open?* On confirm → set `status: done` + append `truths[]` to `VERIFICATION.md must_haves.truths`. On defer → leave `status: active` (`/sf:status` keeps surfacing it). Don't auto-close, don't rely on the user remembering later — but the decision is theirs. A change isn't done until its record reads `status: done`.

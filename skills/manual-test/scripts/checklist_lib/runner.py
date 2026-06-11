@@ -6,6 +6,7 @@ runs after all suites complete. Refuses to bypass: the only way to add a test is
 to add a YAML block.
 """
 import argparse
+import json
 import sys
 
 try:
@@ -28,6 +29,9 @@ def parse_args(argv=None):
     p.add_argument("--id", dest="test_id", default=None)
     p.add_argument("--base-url", default=None)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--json", action="store_true",
+                   help="emit a final machine-readable JSON line "
+                        '{"passed":[...],"failed":[{"id","reason"}]} for verify-collect')
     return p.parse_args(argv)
 
 
@@ -113,6 +117,7 @@ def main(argv=None):
                 return 2
 
     total = passed = failed = skipped = 0
+    results = []  # per-test outcome for --json: {"id", "ok", "reason"}
 
     for suite in doc.get("suites", []) or []:
         print(f"{BOLD}── suite: {suite.get('id', '?')} ──{RESET}")
@@ -140,6 +145,7 @@ def main(argv=None):
             if err:
                 print(f"  {RED}✗ {tid}: setup failed: {err}{RESET}")
                 failed += 1
+                results.append({"id": tid, "ok": False, "reason": f"setup failed: {err}"})
                 continue
 
             req = test.get("request") or {}
@@ -184,12 +190,14 @@ def main(argv=None):
                 for e in errs:
                     print(f"      {e}")
                 failed += 1
+                results.append({"id": tid, "ok": False, "reason": "; ".join(str(e) for e in errs) or "FAIL"})
             else:
                 tail = f"  status={a}" if kind == "http" else ""
                 print(f"    {GREEN}✓ PASS{RESET}{tail}")
                 for m in msgs:
                     print(m)
                 passed += 1
+                results.append({"id": tid, "ok": True})
 
             setup.run_steps(test.get("teardown", []), ctx, warn_only=True)
 
@@ -207,4 +215,11 @@ def main(argv=None):
     print(f"  {GREEN}passed:  {passed}{RESET}")
     print(f"  {RED}failed:  {failed}{RESET}")
     print(f"  skipped: {skipped}")
+    if args.json:
+        # Final machine-readable line for `flow-tools verify-collect`. The human
+        # summary above stays for the console; verify-collect reads this last line.
+        print(json.dumps({
+            "passed": [r["id"] for r in results if r["ok"]],
+            "failed": [{"id": r["id"], "reason": r.get("reason", "FAIL")} for r in results if not r["ok"]],
+        }))
     return 0 if failed == 0 else 1
