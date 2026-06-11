@@ -54,7 +54,7 @@ With a file path given, skip Mode 0 and go straight to the Steps.
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs branch-ensure --kind sd --name <feature>
    ```
-   Creates/switches `feat/<feature>` when on the base branch (no-op if already on a work branch or `mode: off`). Keeps the whole SD → implement → ship lifecycle on one branch.
+   Creates/switches `feat/<feature>` when on the base branch (no-op if already on a work branch or `mode: off`). Keeps the whole SD → implement → ship lifecycle on one branch. **Multi-repo (`config.repos` set):** this creates the same `feat/<feature>` branch in every configured service repo (one PR per service later).
 
 3. **Pass-1 — deterministic harvest**
    ```

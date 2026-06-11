@@ -13,6 +13,7 @@ You implement exactly ONE task. The SD section is the contract.
 - `CONTEXT.md` (locked decisions).
 - SD section(s) this task traces to (paths from the orchestrator).
 - Stack context: read `.spec-flow/config.json` → `stack`. Follow existing project patterns.
+- **Target repo (multi-repo):** read `config.repos`. If set, the planning `.spec-flow/` is in the hub repo but this task's code lives in a sibling service repo. The SD labels each component/FR by service (e.g. "(auth-svc)") — `cd` into `config.repos[<service>]` to read, edit, and build/test the code there. Absent → all code is in cwd.
 
 ## Procedure
 1. Read the SD section(s) and CONTEXT.md. If code reality contradicts the SD, STOP and report the drift — do not satisfy a wrong spec.
@@ -25,10 +26,10 @@ You implement exactly ONE task. The SD section is the contract.
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-link \
      --task <id> --feature <feature> \
-     --fr <FR-id-if-known> \
+     --fr <FR-id-if-known> [--repo <service>] \
      --files "<comma-separated relative paths changed>"
    ```
-   Omit `--fr` if the task has no specific FR. All changed files in one call. (If `--feature` is omitted it falls back to the active feature in `trace.json`.)
+   Omit `--fr` if the task has no specific FR. All changed files in one call. (If `--feature` is omitted it falls back to the active feature in `trace.json`.) **Multi-repo:** pass `--repo <service>` (the repo you edited) and give `--files` relative to that repo's root — the path is stored qualified (`<service>/src/...`) so files from different services stay distinguishable.
 7. Log to the task via the **CLI** (this agent has no MCP access; the CLI reads `.taskmaster/config.json`
    fresh → keyless `claude-code`): `npx -y -p task-master-ai@0.43.1 task-master update-task --id=<id> --append --prompt="<actual field names, HTTP status codes, error codes, files changed>"`. Use `update-task --append`, NOT `update-subtask` — the latter needs a `parent.sub` id and fails for tasks that were not expanded into subtasks (the common solo/fast-path case).
 8. Return control to the orchestrator — do NOT run the full test suite or mark the task done.

@@ -1,6 +1,6 @@
 ---
 description: One-time init that attaches spec-flow to a project — writes the committed .spec-flow/ profile (config.json, project-author.md) so spec-flow lives with the project lifecycle and evolves per project.
-argument-hint: "[--name <project-name>] [--stack java-spring|node|python|go|dotnet] [--design-type auto|api|internal|hybrid] [--language en|vi|...]"
+argument-hint: "[--name <project-name>] [--stack java-spring|node|python|go|dotnet] [--design-type auto|api|internal|hybrid] [--language en|vi|...] [--repos \"name=../path,...\"]"
 allowed-tools: Read, Write, Edit, Bash, AskUserQuestion
 ---
 
@@ -26,6 +26,8 @@ Input: `$ARGUMENTS` (all optional; spec-flow auto-detects project name from the 
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs init-project $ARGUMENTS [--no-commit-docs] [--language <code>]
    ```
    Creates (idempotent — existing files left untouched): `.spec-flow/config.json`, `.spec-flow/project-author.md`, and the `srs/`, `snapshots/`, `changes/`, `bugs/` dirs. With `--no-commit-docs` it also appends `.spec-flow/` to the project `.gitignore`.
+
+   **Multi-repo (`--repos`):** when one SRS/SD is implemented across several service repos, pass `--repos "auth-svc=../auth-svc,billing-svc=../billing-svc"` (logical name = relative path from THIS hub repo). This seeds `config.repos`, and from then on `verify-code` scans every repo, `branch-ensure` branches every repo, and `/sf:phase` cd's into the right one per task. Omit it for the normal single-repo case. Editable later in `config.json` → `repos`.
 
    `srs/` is the recommended home for input docs — one live, editable file per feature, `.spec-flow/srs/<feature>.md` (a formal SRS *or* just your idea/description; it plays the SRS role). You edit this file; `srs-snapshot` freezes immutable baselines into `snapshots/` at each ingest/resync. `/sf:ingest` and `/sf:resync` still accept any path — `srs/` is convention, not enforced.
 

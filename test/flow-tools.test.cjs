@@ -227,3 +227,38 @@ test('REGRESSION verify-code: unconfigured project → gate "skipped", not "pass
   assert.equal(r.ok, true, 'verify-code never throws');
   assert.equal(r.data.gate, 'skipped', 'unconfigured gate is skipped, not pass');
 });
+
+// ---------------------------------------------------------------------------
+// Multi-repo: one SRS/SD whose code lives in sibling service repos (v0.2.0)
+// ---------------------------------------------------------------------------
+
+test('multi-repo verify-code: scans each code repo, prefixes checks, gate is worst', () => {
+  // hub/ holds the planning .spec-flow; code lives in sibling svc-a / svc-b.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-mr-'));
+  const hub = path.join(root, 'hub');
+  fs.mkdirSync(path.join(root, 'svc-a', 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'svc-b', 'src'), { recursive: true });
+  fs.mkdirSync(hub, { recursive: true });
+  fs.writeFileSync(path.join(root, 'svc-a', 'src', 'A.java'), 'class A { void f(){ x.block(); } }\n');
+  fs.writeFileSync(path.join(root, 'svc-b', 'src', 'B.java'), 'class B { void g(){ ok(); } }\n');
+  const init = run(['init-project', '--stack', 'java-spring', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
+  assert.equal(init.ok, true);
+  const cfg = JSON.parse(fs.readFileSync(path.join(hub, '.spec-flow', 'config.json'), 'utf8'));
+  assert.deepEqual(cfg.repos, { 'svc-a': '../svc-a', 'svc-b': '../svc-b' }, 'config.repos seeded');
+  const r = run(['verify-code'], hub);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.gate, 'fail', 'svc-a .block() makes the aggregate gate fail');
+  const aFp = r.data.checks.find((c) => c.name === '[svc-a] forbidden-patterns');
+  const bFp = r.data.checks.find((c) => c.name === '[svc-b] forbidden-patterns');
+  assert.equal(aFp && aFp.status, 'fail', 'svc-a forbidden-patterns fails (.block())');
+  assert.equal(bFp && bFp.status, 'ok', 'svc-b forbidden-patterns ok');
+});
+
+test('multi-repo trace-link --repo qualifies the stored path', () => {
+  const dir = tmpProject();
+  run(['init-project', '--repos', 'svc-a=../svc-a'], dir);
+  const r = run(['trace-link', '--task', '1', '--feature', 'demo', '--repo', 'svc-a', '--files', 'src/A.java'], dir);
+  assert.equal(r.ok, true);
+  const links = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'file-links.json'), 'utf8'));
+  assert.equal(links.links[0].file, 'svc-a/src/A.java', 'path is repo-qualified, not bare src/A.java');
+});

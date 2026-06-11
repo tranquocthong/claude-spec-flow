@@ -76,6 +76,31 @@ function readTmTasks(tm, preferredTag) {
 // unambiguous — Task Master task ids repeat across features, so a single global
 // store would collide and cross-contaminate traces.
 function fileLinksPathFor(feature) { return path.join(STATE_DIR, 'specs', feature, 'file-links.json'); }
+// Multi-repo: a feature's code may live in sibling service repos (config.repos =
+// { "<name>": "<relative-path-from-this-repo>" }). resolveRepos returns the code
+// roots to operate on. Absent/empty → single-repo mode: one root at cwd, name null
+// (full backward compat — every existing single-repo project keeps working).
+function resolveRepos(cfg) {
+  const repos = cfg && cfg.repos && typeof cfg.repos === 'object' ? cfg.repos : null;
+  if (!repos || !Object.keys(repos).length) return [{ name: null, root: process.cwd() }];
+  return Object.entries(repos).map(([name, rel]) => ({
+    name,
+    root: path.isAbsolute(rel) ? rel : path.resolve(process.cwd(), String(rel)),
+  }));
+}
+// Parse a --repos "name=../path,other=../other" value into a {name:path} map.
+function parseReposArg(val) {
+  if (typeof val !== 'string' || !val.trim()) return null;
+  const out = {};
+  for (const pair of val.split(',')) {
+    const i = pair.indexOf('=');
+    if (i < 0) continue;
+    const name = pair.slice(0, i).trim();
+    const p = pair.slice(i + 1).trim();
+    if (name && p) out[name] = p;
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 // Directories to skip when walking source trees (build outputs, caches, VCS, deps).
 // Generic — applies to any stack; no stack-specific logic.
@@ -505,6 +530,9 @@ const commands = {
     // FR/TC/NFR IDs, code identifiers) stays canonical English so the deterministic
     // parsers (checklist-gen, trace-build) keep working.
     const language = (typeof args.language === 'string' && args.language.trim()) ? args.language.trim() : 'en';
+    // Multi-repo: --repos "auth-svc=../auth-svc,billing-svc=../billing-svc" → config.repos map.
+    // Absent → single-repo (cwd). One SRS/SD can drive code across sibling repos.
+    const repos = parseReposArg(args.repos);
 
     // ---- verify presets (DATA — engine never reads these; verify-code is generic) ----
     const VERIFY_PRESETS = {
@@ -609,6 +637,10 @@ const commands = {
         existingCfg.phase = { confirmTasks: true };
         dirty = true;
       }
+      if (repos && !existingCfg.repos) {
+        existingCfg.repos = repos;
+        dirty = true;
+      }
       if (dirty) {
         try {
           fs.writeFileSync(PATHS.config, JSON.stringify(existingCfg, null, 2) + '\n');
@@ -630,6 +662,7 @@ const commands = {
         },
         verify: verifyPreset,
         branching: BRANCHING_DEFAULT,
+        ...(repos ? { repos } : {}),
         // phase.confirmTasks: after Step 0 seeds the task list, /sf:phase pauses for a
         // one-time human review of the breakdown before implementing (parse-prd is an
         // AI op, not deterministic — "approve SD" does not cover the task list). Set
@@ -969,10 +1002,14 @@ const commands = {
 
     const now = new Date().toISOString();
     let added = 0;
+    // Multi-repo: --repo <name> qualifies the stored path as "<name>/<path>" so
+    // files from sibling service repos stay distinguishable (auth-svc/src/... vs
+    // billing-svc/src/...). Single-repo callers omit --repo → bare paths as before.
+    const repoPrefix = (typeof args.repo === 'string' && args.repo.trim()) ? args.repo.trim().replace(/\/+$/, '') + '/' : '';
 
     for (const filePath of filePaths) {
-      // Normalise: strip leading ./
-      const normPath = filePath.replace(/^\.\//, '');
+      // Normalise: strip leading ./ ; prefix the repo when given.
+      const normPath = repoPrefix + filePath.replace(/^\.\//, '');
       const existing = store.links.find(l => l.task === String(taskId) && l.file === normPath);
       if (existing) {
         // Update fr and ts if re-linked
@@ -1891,7 +1928,6 @@ const commands = {
   // -----------------------------------------------------------------------
   'branch-ensure'(args) {
     const { execSync } = require('child_process');
-    const git = (cmd) => execSync(`git ${cmd}`, { stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 }).toString().trim();
 
     const cfg = readJsonSafe(PATHS.config, null);
     const branching = cfg && cfg.branching;
@@ -1920,29 +1956,38 @@ const commands = {
 
     const base = branching.base || 'main';
 
-    let current;
-    try { current = git('rev-parse --abbrev-ref HEAD'); }
-    catch (e) {
-      if (/ambiguous argument 'HEAD'|unknown revision/i.test(e.message))
-        return err('NO_COMMITS: git repo has no commits yet — make an initial commit before branching');
-      return err(`NOT_A_GIT_REPO: ${e.message}`);
-    }
+    // Ensure the branch in ONE repo root (cwd-scoped git). Same policy everywhere:
+    // create/switch only when on base; never switch away from a feature branch.
+    const ensureIn = (rootDir) => {
+      const git = (cmd) => execSync(`git ${cmd}`, { cwd: rootDir, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 }).toString().trim();
+      let current;
+      try { current = git('rev-parse --abbrev-ref HEAD'); }
+      catch (e) {
+        if (/ambiguous argument 'HEAD'|unknown revision/i.test(e.message)) return { error: 'NO_COMMITS' };
+        return { error: 'NOT_A_GIT_REPO' };
+      }
+      if (current === target) return { branch: target, action: 'already-on' };
+      if (current !== base) return { branch: current, action: 'kept', note: `not on base (${base})` };
+      let exists = false;
+      try { git(`show-ref --verify --quiet refs/heads/${target}`); exists = true; } catch { exists = false; }
+      try {
+        git(exists ? `checkout ${target}` : `checkout -b ${target}`);
+        return { branch: target, action: exists ? 'switched' : 'created' };
+      } catch (e) { return { error: `CHECKOUT_FAILED: ${e.message}` }; }
+    };
 
-    if (current === target) return ok({ branch: target, action: 'already-on', base, mode: branching.mode });
-    if (current !== base) {
-      return ok({ branch: current, action: 'kept', base, mode: branching.mode, note: `not on base (${base}); staying on ${current}` });
+    // Multi-repo: branch each code repo (one feat/<feature> per service → clean
+    // PR-per-service). Single-repo: just cwd (backward compat, flat result shape).
+    const roots = resolveRepos(cfg);
+    if (roots.length === 1 && !roots[0].name) {
+      const r = ensureIn(roots[0].root);
+      if (r.error === 'NO_COMMITS') return err('NO_COMMITS: git repo has no commits yet — make an initial commit before branching');
+      if (r.error === 'NOT_A_GIT_REPO') return err('NOT_A_GIT_REPO');
+      if (r.error) return err(r.error);
+      return ok({ ...r, base, mode: branching.mode });
     }
-
-    // On base → create or switch to target.
-    let exists = false;
-    try { git(`show-ref --verify --quiet refs/heads/${target}`); exists = true; } catch { exists = false; }
-    try {
-      if (exists) { git(`checkout ${target}`); return ok({ branch: target, action: 'switched', base, mode: branching.mode }); }
-      git(`checkout -b ${target}`);
-      return ok({ branch: target, action: 'created', base, mode: branching.mode });
-    } catch (e) {
-      return err(`CHECKOUT_FAILED: ${e.message}`);
-    }
+    const results = roots.map((rp) => ({ repo: rp.name, ...ensureIn(rp.root) }));
+    return ok({ branch: target, base, mode: branching.mode, repos: results });
   },
 
   // -----------------------------------------------------------------------
@@ -2181,15 +2226,22 @@ const commands = {
       secretScan = true,
     } = verifyCfg;
 
-    // Resolve scanPath: explicit → src if exists → '.'
-    let scanPath = rawScanPath || null;
-    if (!scanPath) {
-      const srcCandidate = path.join(process.cwd(), 'src');
-      scanPath = fs.existsSync(srcCandidate) ? 'src' : '.';
-    }
+    // Multi-repo: run the checks inside EACH code root (config.repos) so a feature
+    // whose code lives in sibling service repos is actually scanned. Single-repo →
+    // one root at cwd (backward compat). Check names are repo-prefixed in multi mode.
+    const roots = resolveRepos(cfg);
 
-    const checks = [];
-    let testOutput = '';
+    // Build the check list for ONE repo root. `rootDir` scopes both the test/
+    // coverage commands' cwd and the forbidden/secret filesystem scans.
+    const runChecksInRoot = (rootDir) => {
+      // Resolve scanPath per root: explicit → src if exists → '.'
+      let scanPath = rawScanPath || null;
+      if (!scanPath) {
+        scanPath = fs.existsSync(path.join(rootDir, 'src')) ? 'src' : '.';
+      }
+
+      const checks = [];
+      let testOutput = '';
 
     // ---- a. tests ---------------------------------------------------------
     if (!testCommand) {
@@ -2201,7 +2253,7 @@ const commands = {
       try {
         const result = spawnSync(testCommand, {
           shell: true,
-          cwd: process.cwd(),
+          cwd: rootDir,
           timeout: 600000,
           encoding: 'utf8',
           stdio: 'pipe',
@@ -2244,7 +2296,7 @@ const commands = {
       if (coverageCommand) {
         try {
           const cr = spawnSync(coverageCommand, {
-            shell: true, cwd: process.cwd(), timeout: 120000, encoding: 'utf8', stdio: 'pipe',
+            shell: true, cwd: rootDir, timeout: 120000, encoding: 'utf8', stdio: 'pipe',
           });
           covText = (cr.stdout || '') + (cr.stderr || '');
         } catch (e) {
@@ -2309,7 +2361,7 @@ const commands = {
         }
       };
 
-      const absScanPath = path.isAbsolute(scanPath) ? scanPath : path.join(process.cwd(), scanPath);
+      const absScanPath = path.isAbsolute(scanPath) ? scanPath : path.join(rootDir, scanPath);
       if (fs.existsSync(absScanPath)) {
         walkDir(absScanPath, 0);
       }
@@ -2376,7 +2428,7 @@ const commands = {
         }
       };
 
-      const absScanPath = path.isAbsolute(scanPath) ? scanPath : path.join(process.cwd(), scanPath);
+      const absScanPath = path.isAbsolute(scanPath) ? scanPath : path.join(rootDir, scanPath);
       if (fs.existsSync(absScanPath)) {
         walkForSecrets(absScanPath, 0);
       }
@@ -2390,17 +2442,29 @@ const commands = {
         checks.push(makeCheck('secret-scan', 'ok',
           `No secret patterns found in ${scanPath}`, null));
       }
+      }
+      return checks;
+    };
+
+    // Aggregate across all code roots. In multi-repo mode prefix each check name
+    // with its repo so a failing check is traceable to the right service.
+    const checks = [];
+    for (const rp of roots) {
+      const got = runChecksInRoot(rp.root);
+      if (rp.name) got.forEach((c) => { c.name = `[${rp.name}] ${c.name}`; c.repo = rp.name; });
+      checks.push(...got);
     }
 
     // ---- summary + gate ---------------------------------------------------
     const summary = { ok: 0, warn: 0, fail: 0, skipped: 0 };
     for (const c of checks) summary[c.status] = (summary[c.status] || 0) + 1;
     // 'skipped' when nothing actually ran (all checks skipped) — don't let a no-op
-    // gate read as 'pass'. 'fail' on any failure; else 'pass' if at least one real check ran.
+    // gate read as 'pass'. 'fail' on any failure (worst-wins across repos); else
+    // 'pass' if at least one real check ran in any repo.
     const ran = summary.ok + summary.warn + summary.fail;
     const gate = summary.fail > 0 ? 'fail' : (ran === 0 ? 'skipped' : 'pass');
 
-    return ok({ checks, summary, gate });
+    return ok({ checks, summary, gate, repos: roots.map((r) => r.name).filter(Boolean) });
   },
 
   // -----------------------------------------------------------------------

@@ -23,6 +23,8 @@ Turn the staged diff into a clean conventional commit, push, and surface the MR/
 This skill is **convention only** — no personal style, no stack assumptions. Branch policy
 lives in `.spec-flow/config.json → branching` and is created by the lifecycle commands, not here.
 
+**Multi-repo:** this skill operates on the **current working directory's** git repo only. When `config.repos` is set (one SD across sibling service repos), the caller runs this skill **once per repo with staged changes** — `cd` into each repo first. `branch-ensure` has already created the same `feat/<feature>` branch in each, so each invocation commits + pushes + surfaces one PR for that service; collect the PR links together.
+
 ## Modes
 
 | Invocation | Behavior |

@@ -20,6 +20,8 @@ allowed-tools: Read, Write, Edit, Bash, Agent
 
 > **Per-feature tag — task isolation.** EVERY TM op in this flow operates on tag `<feature>` (the feature slug): add `--tag <feature>` to CLI ops, `tag: "<feature>"` to MCP ops. This keeps each feature in its own task space, so a prior feature's (or bug/change's) tasks never collide with or block the next — the same per-feature rule as file-links. `parse-prd --tag <feature>` creates the tag; state ops are lenient (a not-yet-seeded tag just returns empty, no error).
 
+> **Multi-repo — one SRS/SD, code in sibling service repos.** Read `config.repos` from `.spec-flow/config.json` (e.g. `{ "auth-svc": "../auth-svc", "billing-svc": "../billing-svc" }`). When set, the planning `.spec-flow/` lives in THIS repo (the hub) but each task's code lives in a sibling repo. The SD labels every component/FR by service (e.g. "(auth-svc)", "(billing-svc)") — use that to pick the target repo. For each task: **`cd` into `config.repos[<service>]` to implement + build/test there**, then record the change with **`trace-link --repo <service> --files ...`** so the path is stored repo-qualified (`auth-svc/src/...`). `verify-code` and `branch-ensure` already loop over all `config.repos` automatically — you do not call them per repo. Absent `config.repos` → single-repo (everything in cwd), nothing changes.
+
 ## Preconditions (hard gates)
 - SD approved (0 `TODO:MANUAL-REVIEW`) — **the primary human gate**. After it, the agent runs every CLI step itself; the user never runs one. (A second, lightweight review pause may follow Step 0 — see Step 0.5 — but the user still runs nothing, only eyeballs the seeded task list.)
 - `CHECKLIST.yaml` exists (run `/sf:checklist` if not).
@@ -74,9 +76,10 @@ Returns per-FR complexity scores (1–10):
    If executor did not call `trace-link`, run it from the executor's reported file list:
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-link \
-     --task <id> --feature <feature> [--fr <FR-id-if-known>] \
+     --task <id> --feature <feature> [--fr <FR-id-if-known>] [--repo <service>] \
      --files "<comma-separated relative paths changed>"
    ```
+   Multi-repo: pass `--repo <service>` (the repo the files live in) so paths are stored qualified.
    Then rebuild trace:
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-build --sd .spec-flow/specs/<feature>/SD.md
@@ -137,6 +140,7 @@ Returns per-FR complexity scores (1–10):
    ```
 
 4. **Ship**: stage the change, then invoke the bundled **commit** skill in `push` mode (`skills/commit`). It generates the conventional-commit message, commits on the current `feat/<feature>` branch (created earlier by `/sf:ingest` via `branch-ensure`; it refuses to commit on the base branch when `branching.mode != off`), pushes, and surfaces the MR/PR link (GitLab merge-request URL / GitHub compare URL or `gh pr create`). Report the link back to the user.
+   - **Multi-repo:** `branch-ensure` already created `feat/<feature>` in EVERY `config.repos` service. Run the commit skill **once per repo that has staged changes** (`cd` into each), producing one PR per service. Report all PR links together so reviewers see the full cross-service change set.
 
 ## Pipeline recap
 ```
