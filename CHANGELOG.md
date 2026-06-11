@@ -2,6 +2,14 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.3.1] — 2026-06-12
+
+Workflow guidance fixes (doc-only, no engine change).
+
+- **W5** — a chore/migration task with no FR trace now has explicit fallback guidance in `hybrid-executor` (anchor on the task's own details + existing patterns; flag, don't invent, behavior that should be specified).
+- **W6** — the `verify-code: skipped` no-op message is surfaced **once per phase**, not on every task (was noise).
+- **W7** — `/sf:split` STEP 5c documents per-sub-feature snapshots so a later `/sf:resync` can attribute SRS edits to the right sub-feature (a single shared epic snapshot defeats the feature-scoped `srs-diff`).
+
 ## [0.3.0] — 2026-06-11
 
 Audit-hardening release (from a full external review). Bug fixes + workflow dead-end removal + transparency, no removed behavior.

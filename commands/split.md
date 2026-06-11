@@ -101,13 +101,13 @@ node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-build \
   --feature <epic-slug>-<sub-slug>
 ```
 
-**5c. Snapshot the SRS (once, shared across all sub-features):**
+**5c. Snapshot the SRS baseline:**
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs srs-snapshot --srs <srs-path>
 ```
 
-(Only needed once — skip if already snapshotted.)
+A single shared epic snapshot is fine for a **one-shot split that won't resync**. **But if the sub-features will evolve independently** (the usual case), prefer a **per-sub-feature snapshot** so a later `/sf:resync` knows which sub an SRS edit belongs to: split the epic SRS into `srs/<epic>-<sub>.md` slices and `srs-snapshot --srs <that slice>` per sub. Otherwise every sub diffs against the same epic baseline and `srs-diff` can't attribute a change to the right sub-feature (it now resolves the snapshot by feature name — a shared epic baseline defeats that). Decide per project; default to per-sub when in doubt.
 
 ---
 

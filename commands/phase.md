@@ -94,7 +94,7 @@ Returns per-FR complexity scores (1–10):
    Parse returned JSON:
    - `gate: "fail"` → `set_task_status` → `review`; surface `detail` and `fix`; **halt**.
    - `gate: "pass"` → at least one real check ran and none failed → proceed to step 5.
-   - `gate: "skipped"` → **nothing was actually verified** (no `verify` block configured). Do NOT report the code as verified. Surface the `note` to the user once ("verify not configured — the automated gate checked nothing; re-run `/sf:init --stack <stack>` to seed a real preset"), then proceed (it does not block — but it is honestly a no-op, not a pass).
+   - `gate: "skipped"` → **nothing was actually verified** (no `verify` block configured). Do NOT report the code as verified. Surface the `note` **once per phase, on the first task only** — repeating "verify not configured" on every task is noise; say it once ("verify not configured — the automated gate checks nothing this run; re-run `/sf:init --stack <stack>` to seed a real preset"), then stay silent on it for the remaining tasks. It does not block — but it is honestly a no-op, not a pass.
    Generic and config-driven — Java teams configure gradle + forbidden patterns; a project with no verify block is `skipped` (surfaced as a no-op), never a silent pass.
 
 5. **Manual-test gate** — applies to tasks that expose a testable surface.

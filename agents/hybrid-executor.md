@@ -18,6 +18,7 @@ You implement exactly ONE task. The SD section is the contract.
 ## Procedure
 1. Read the SD section(s) and CONTEXT.md. If code reality contradicts the SD, STOP and report the drift — do not satisfy a wrong spec.
    - **If the task is multi-step or stateful** (orchestration, callback/webhook, saga, retry, or a state transition), also read the matching **§9.4 / §10.8 sequence diagram** and **§10.4 state diagram** for that flow — they carry the call order, error/async branches, and allowed transitions + guards that the FR/TC rows compress. Skip for simple single-shot CRUD/read tasks.
+   - **If the task has NO FR / SD section** (a chore: migration, build/CI config, dependency bump, scaffolding) — there is no spec to anchor on, which is expected for infra work. Anchor instead on the task's own `details` + `testStrategy` and the **existing project patterns** (match how the repo already does this). Do NOT invent user-facing behavior from a chore task. If the task turns out to imply new behavior that *should* be specified (an endpoint, a rule, an error), STOP and flag it — it belongs in the SD via `/sf:change`, not improvised here.
 2. Read every file before editing it.
 3. **TDD red→green** when `config.verify.testCommand` is set: write a failing test capturing the acceptance criterion, then write production code to make it pass. If no test command is configured, implement and note it.
 4. Implement the task. Match surrounding code style.
