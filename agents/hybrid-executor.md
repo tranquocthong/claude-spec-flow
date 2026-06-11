@@ -16,6 +16,7 @@ You implement exactly ONE task. The SD section is the contract.
 
 ## Procedure
 1. Read the SD section(s) and CONTEXT.md. If code reality contradicts the SD, STOP and report the drift — do not satisfy a wrong spec.
+   - **If the task is multi-step or stateful** (orchestration, callback/webhook, saga, retry, or a state transition), also read the matching **§9.4 / §10.8 sequence diagram** and **§10.4 state diagram** for that flow — they carry the call order, error/async branches, and allowed transitions + guards that the FR/TC rows compress. Skip for simple single-shot CRUD/read tasks.
 2. Read every file before editing it.
 3. **TDD red→green** when `config.verify.testCommand` is set: write a failing test capturing the acceptance criterion, then write production code to make it pass. If no test command is configured, implement and note it.
 4. Implement the task. Match surrounding code style.

@@ -71,8 +71,7 @@ For each failure path from step B, ensure a §12.2 row exists:
 - `§6.1`: Mermaid `graph TB` of components/actors from the SRS sequence diagram (or §5.1 user journey). Label edges with protocol (REST, Kafka, DB).
 - `§6.2`: Component table (Component | Role | Technology).
 
-**§9.4 / §10.8 Sequence Diagrams** — one per major flow from §5.1 or SRS flow section.
-- Mermaid `sequenceDiagram` with `autonumber`. Include error/async `alt`/`loop` blocks. Reference exact FR IDs in comments (`%% FR-003`).
+**§9.4 / §10.8 Sequence Diagrams** — **adaptive, not mandatory.** Draw one only for a flow that genuinely needs ordering made explicit: ≥3 participant hops, OR an async/callback/retry/saga step, OR an error branch that changes the call sequence. **Skip for simple single-shot CRUD / read / transform flows** — there the FR + §13.2 TC + §9.2 endpoint table already carry the full contract, and a diagram is redundant ceremony. When you do draw one: Mermaid `sequenceDiagram` with `autonumber`, include error/async `alt`/`loop` blocks, reference exact FR IDs in comments (`%% FR-003`). The diagram is for human review + a downstream implementer of multi-step tasks — so any fact it shows (a status code, an error path, a field) MUST also live in the FR/TC/§9.2/§12.2 rows, never only in the diagram (the per-task implementer trace-links to those rows, not to the diagram).
 
 **§10.4 State Management** (internal or hybrid only)
 - `stateDiagram-v2` from the SRS state table.
