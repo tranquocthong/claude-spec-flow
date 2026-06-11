@@ -60,6 +60,8 @@ Returns per-FR complexity scores (1–10):
 
 ## Per-task loop
 
+0. **Pick up `review` tasks FIRST (no dead-end).** Before `next_task`, check for tasks stuck in `review` (`get_tasks` `status=review`, `tag: "<feature>"`). A task lands in `review` two ways: (a) smoke **failed** (step 5 halted it), or (b) it was implemented but never closed. `next_task` does **not** return `review` tasks, so left alone they are a silent dead-end. For each `review` task: re-run its smoke suite (step 5). **Passed** → close it (step 6). **Failed** → re-attempt: set it back to `in-progress`, re-spawn the executor with the FAIL output as context, fix, re-verify. If the same task fails smoke **twice in a row**, STOP and ask the user (it likely needs a spec change → `/sf:change`, or a bug fix → `/sf:bug`) — do not loop forever. Only when no `review` task remains, proceed to step 1.
+
 1. **Next task**
    ```
    mcp__task-master-ai__next_task   # tag: "<feature>"  (see per-feature tag rule above — applies to every TM op below)
@@ -139,8 +141,9 @@ Returns per-FR complexity scores (1–10):
      --feature <feature> --note "phase complete — regression passed"
    ```
 
-4. **Ship**: stage the change, then invoke the bundled **commit** skill in `push` mode (`skills/commit`). It generates the conventional-commit message, commits on the current `feat/<feature>` branch (created earlier by `/sf:ingest` via `branch-ensure`; it refuses to commit on the base branch when `branching.mode != off`), pushes, and surfaces the MR/PR link (GitLab merge-request URL / GitHub compare URL or `gh pr create`). Report the link back to the user.
-   - **Multi-repo:** `branch-ensure` already created `feat/<feature>` in EVERY `config.repos` service. Run the commit skill **once per repo that has staged changes** (`cd` into each), producing one PR per service. Report all PR links together so reviewers see the full cross-service change set.
+4. **Ship** — **HARD GUARD first (G3):** do NOT ship unless `VERIFICATION.md` reads `status: passed` (or `verified-adhoc` for an out-of-loop live verify). If it is `failed` or missing, STOP — go back to the regression sweep; shipping unverified defeats the whole gate. Once passed: stage the change, then invoke the bundled **commit** skill in `push` mode (`skills/commit`). It generates the conventional-commit message, commits on the current `feat/<feature>` branch (created earlier by `/sf:ingest` via `branch-ensure`; it refuses to commit on the base branch when `branching.mode != off`), pushes, and surfaces the MR/PR link (GitLab merge-request URL / GitHub compare URL or `gh pr create`). Report the link back to the user.
+   - **Tag the shipped feature (G2):** after the PR is up, create a lightweight, annotated git tag marking the shippable point — `git tag -a <feature>-v<n> -m "<feature> shipped"` then `git push --tags`. This is spec-flow's lightweight replacement for milestone archival: the tag is a durable, greppable record that this SD reached a verified ship, independent of branch/PR lifecycle. Skip only if the project opts out (`branching.mode: off`).
+   - **Multi-repo:** `branch-ensure` already created `feat/<feature>` in EVERY `config.repos` service. Run the commit skill **once per repo that has staged changes** (`cd` into each), producing one PR per service, and tag each repo. Report all PR links + tags together so reviewers see the full cross-service change set.
 
 ## Pipeline recap
 ```

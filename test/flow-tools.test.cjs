@@ -262,3 +262,69 @@ test('multi-repo trace-link --repo qualifies the stored path', () => {
   const links = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'file-links.json'), 'utf8'));
   assert.equal(links.links[0].file, 'svc-a/src/A.java', 'path is repo-qualified, not bare src/A.java');
 });
+
+// ---------------------------------------------------------------------------
+// Audit-hardening regressions (v0.3.0)
+// ---------------------------------------------------------------------------
+
+test('REGRESSION B1: branch-ensure --kind sd without --name → MISSING_ARG (not a `feat` branch)', () => {
+  const dir = tmpProject();
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['-c', 'user.email=t@t.co', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir });
+  initProject(dir);
+  const r = run(['branch-ensure', '--kind', 'sd'], dir);  // no --name
+  assert.equal(r.ok, false, 'must refuse, not branch `feat`');
+  assert.match(r.error, /MISSING_ARG: --name/);
+  const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+  assert.notEqual(branch, 'feat', 'must not have created a `feat` branch');
+});
+
+test('REGRESSION B1: branch-ensure --kind sd --name X → creates feat/x', () => {
+  const dir = tmpProject();
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['-c', 'user.email=t@t.co', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir });
+  initProject(dir);
+  const r = run(['branch-ensure', '--kind', 'sd', '--name', 'My Feature'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.branch, 'feat/my-feature');
+  assert.equal(r.data.action, 'created');
+});
+
+test('REGRESSION B6: route on an empty FR table → count 0 with an explicit note', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  // FR table header present, zero data rows.
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |', '',
+  ].join('\n'));
+  const r = run(['route', '--sd', path.join(sdDir, 'SD.md')], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.count, 0);
+  assert.match(r.data.note || '', /0 rows/i, 'empty FR table is surfaced, not a silent count:0');
+});
+
+test('REGRESSION B4: srs-diff picks the latest snapshot of THE FEATURE by version, not mtime', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const snaps = path.join(dir, '.spec-flow', 'snapshots');
+  fs.mkdirSync(snaps, { recursive: true });
+  // demo-001 (old), demo-002 (new). Touch demo-001 LAST so mtime would mis-pick it.
+  fs.writeFileSync(path.join(snaps, 'demo-001.md'), '# Feature: demo\n\n## 3. User Stories\n\n### US-1: old\n');
+  fs.writeFileSync(path.join(snaps, 'other-001.md'), '# Feature: other\n\n### US-9: unrelated\n');
+  fs.writeFileSync(path.join(snaps, 'demo-002.md'), '# Feature: demo\n\n## 3. User Stories\n\n### US-1: old\n### US-2: newer\n');
+  // make demo-001 the newest by mtime (the old mtime-based bug would pick it)
+  const future = Date.now() / 1000 + 1000;
+  fs.utimesSync(path.join(snaps, 'demo-001.md'), future, future);
+  const newSrs = path.join(dir, 'demo.md');
+  fs.writeFileSync(newSrs, '# Feature: demo\n\n## 3. User Stories\n\n### US-1: old\n### US-2: newer\n### US-3: newest\n');
+  const r = run(['srs-diff', '--new', newSrs, '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'srs-diff ok');
+  // Against demo-002 (the right baseline) only US-3 is added. Against demo-001 (wrong) US-2+US-3 would be.
+  const addedUs = ((r.data.changeset && r.data.changeset.added) || []).filter((a) => a.kind === 'us').map((a) => a.id);
+  assert.ok(addedUs.includes('US-3'), 'US-3 is new');
+  assert.ok(!addedUs.includes('US-2'), 'US-2 already in demo-002 → not added (proves demo-002 was the baseline, not demo-001)');
+});

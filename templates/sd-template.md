@@ -728,7 +728,7 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-| State        | Mô tả                           | Transitions cho phép          | Action khi vào state              |
+| State        | Meaning                          | Allowed Transitions           | Entry Action                      |
 |--------------|----------------------------------|-------------------------------|-----------------------------------|
 | `Pending`    | Chờ xử lý                       | → Processing                  | —                                 |
 | `Processing` | Đang xử lý                      | → Completed, → Failed         | Lock resource, start processing   |

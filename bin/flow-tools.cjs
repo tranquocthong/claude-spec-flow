@@ -872,6 +872,9 @@ const commands = {
       return { id, requirement: req, priority: prio, source: src, score, route: routeFor(score) };
     });
     const summary = items.reduce((a, it) => { a[it.route] = (a[it.route] || 0) + 1; return a; }, {});
+    // Transparent: an FR table that parsed to zero rows is a real signal (empty/malformed
+    // §5.1), not a successful "nothing to route" — say so rather than a silent count:0.
+    if (!items.length) return ok({ count: 0, summary: {}, items: [], note: 'FR table found but parsed 0 rows — check SD §5.1 formatting.' });
     return ok({ count: items.length, summary, items });
   },
 
@@ -1373,14 +1376,19 @@ const commands = {
     if (!newPath) return err('MISSING_ARG: --new <srs.md>');
     if (!fs.existsSync(newPath)) return err(`NOT_FOUND: ${newPath}`);
 
-    // Resolve old snapshot: explicit --old or latest in .spec-flow/snapshots/
+    // Resolve old snapshot: explicit --old, else the latest snapshot OF THIS FEATURE.
+    // Feature = --feature, else the SRS basename (snapshots are `<feature>-NNN.md`).
+    // Pick by NAME (the NNN version), not mtime — a touch/copy of an old file must not
+    // win, and we must never diff against another feature's snapshot (mtime did both).
     let oldPath = args.old || null;
     if (!oldPath && fs.existsSync(PATHS.snapshots)) {
-      const snaps = fs.readdirSync(PATHS.snapshots)
-        .filter(f => f.endsWith('.md'))
-        .map(f => ({ f, mtime: fs.statSync(path.join(PATHS.snapshots, f)).mtimeMs }))
-        .sort((a, b) => b.mtime - a.mtime);
-      if (snaps.length) oldPath = path.join(PATHS.snapshots, snaps[0].f);
+      const feature = args.feature || slugify(path.basename(newPath).replace(/\.md$/i, ''));
+      const featRe = new RegExp(`^${feature.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+\\.md$`);
+      let snaps = fs.readdirSync(PATHS.snapshots).filter(f => featRe.test(f));
+      // Fallback: if none match this feature (older un-prefixed snapshots), use all .md.
+      if (!snaps.length) snaps = fs.readdirSync(PATHS.snapshots).filter(f => f.endsWith('.md'));
+      snaps.sort();  // lexicographic → `<feature>-001` < `-002` < ... → last = latest
+      if (snaps.length) oldPath = path.join(PATHS.snapshots, snaps[snaps.length - 1]);
     }
     if (!oldPath || !fs.existsSync(oldPath)) {
       return err('NO_OLD_SRS: provide --old <snapshot.md> or run srs-snapshot first');
@@ -1501,12 +1509,12 @@ const commands = {
           continue;
         }
         // PASS line
-        if (/✓\s*PASS/i.test(line) || /\\u2713.*PASS/i.test(line)) {
+        if (/✓\s*PASS/i.test(line)) {
           if (currentId) { passed.push(currentId); currentId = null; }
           continue;
         }
         // FAIL line
-        if (/✗\s*FAIL/i.test(line) || /\\u2717.*FAIL/i.test(line)) {
+        if (/✗\s*FAIL/i.test(line)) {
           if (currentId) {
             // Gather reason lines (indented further) until next test or summary
             const reasonLines = [];
@@ -1526,12 +1534,7 @@ const commands = {
     }
 
     const status = failed.length === 0 ? 'passed' : 'failed';
-    const truths = passed.map(id => {
-      // Try to find a name from the results text
-      const nameMatch = raw.match(new RegExp(`\\s${id}\\s+(?:GET|POST|PUT|DELETE|PATCH)[^\\n]*\\n([^\\n]+)`, 'i'));
-      const name = nameMatch ? nameMatch[1].trim() : id;
-      return `${id}: verified`;
-    });
+    const truths = passed.map(id => `${id}: verified`);
 
     return ok({ status, passed, failed, truths });
   },
@@ -1629,9 +1632,9 @@ const commands = {
       } else if (totalTasks === 0) {
         nextStep = `\`/sf:phase ${featureName}\` — it seeds tasks (parse-prd, agent-run) then implements.`;
       } else if (pending + inProgress > 0) {
-        nextStep = `\`/sf:phase ${featureName}\` — ${pending} pending · ${inProgress} wip${review ? ` · ${review} review (close when verified)` : ''}.`;
+        nextStep = `\`/sf:phase ${featureName}\` — ${pending} pending · ${inProgress} wip${review ? ` · ${review} review (\`/sf:phase\` re-drives these first)` : ''}.`;
       } else if (review > 0) {
-        nextStep = `${review} task(s) in review — implemented but not closed. Reconcile: \`run-checklist ${featureName} --tag regression\` then set them done (NOT \`/sf:phase\` — parse-prd already ran; next_task won't return review tasks).`;
+        nextStep = `${review} task(s) in \`review\` — \`/sf:phase ${featureName}\` picks them up first (re-run smoke → close if passed, re-attempt if failed). next_task alone skips review, so re-running the loop is correct, not a no-op.`;
       } else {
         let verified = false;
         try { verified = /status:\s*passed/i.test(fs.readFileSync(verificationPath, 'utf8')); } catch {}
@@ -1949,6 +1952,16 @@ const commands = {
       slug: args.slug ? slugify(args.slug) : '',
       type: args.type ? slugify(args.type) : 'fix',
     };
+    // Guard required identity per kind BEFORE substituting — else a missing --name
+    // collapses `feat/{feature}` → `feat/` → tidy → `feat`, silently branching `feat`
+    // (the tidy step strips the trailing slash so the endsWith('/') guard misses it).
+    const REQUIRED = { sd: ['feature'], bug: ['id', 'slug'], change: ['id'] };
+    for (const need of (REQUIRED[kind] || [])) {
+      if (!vars[need]) {
+        const flag = need === 'feature' ? '--name' : `--${need}`;
+        return err(`MISSING_ARG: ${flag} required for kind=${kind}`);
+      }
+    }
     let target = tpl.replace(/\{(feature|id|slug|type)\}/g, (_, k) => vars[k]);
     // Tidy any empty segments left by missing vars (e.g. "fix/-cart" → "fix/cart").
     target = target.replace(/-{2,}/g, '-').replace(/\/-+/g, '/').replace(/-+\//g, '/').replace(/-+$/g, '').replace(/\/+$/, '');
@@ -1987,7 +2000,15 @@ const commands = {
       return ok({ ...r, base, mode: branching.mode });
     }
     const results = roots.map((rp) => ({ repo: rp.name, ...ensureIn(rp.root) }));
-    return ok({ branch: target, base, mode: branching.mode, repos: results });
+    // Failures must speak: if EVERY repo errored, this is a hard failure (not ok:true
+    // with errors buried in the array). If only some errored, stay ok but surface them.
+    const errored = results.filter((r) => r.error);
+    if (errored.length === results.length) {
+      return err(`BRANCH_ENSURE_FAILED (all repos): ${errored.map((r) => `${r.repo}:${r.error}`).join('; ')}`);
+    }
+    const out = { branch: target, base, mode: branching.mode, repos: results };
+    if (errored.length) out.warnings = errored.map((r) => `${r.repo}: ${r.error}`);
+    return ok(out);
   },
 
   // -----------------------------------------------------------------------
@@ -2085,7 +2106,7 @@ const commands = {
 
         const detail = `FR: ${frCount}, TC: ${tcCount}, links: ${linkCount}`;
         if (unlinkedFrCount > 0) {
-          push('trace-health', 'warn', `${detail} — ${unlinkedFrCount} FR chưa có test case`, 'review SD §13.2 / re-run: node flow-tools.cjs trace-build --sd <SD.md>');
+          push('trace-health', 'warn', `${detail} — ${unlinkedFrCount} FR without a test case`, 'review SD §13.2 / re-run: node flow-tools.cjs trace-build --sd <SD.md>');
         } else {
           push('trace-health', 'ok', detail, null);
         }
@@ -2094,11 +2115,21 @@ const commands = {
       push('trace-health', 'ok', 'trace.json not yet built (no trace-build run yet)', null);
     }
 
-    // g. SD gate — if --sd given and file exists: count TODO:MANUAL-REVIEW
-    const sdPath = args.sd || null;
+    // g. SD gate — auto-detect the active feature's SD when --sd is omitted, so a
+    // project with an unapproved SD is flagged even without an explicit path
+    // (transparency: don't report "all ok" while a TODO-laden SD is sitting there).
+    let sdPath = args.sd || null;
+    if (!sdPath) {
+      const tr = readJsonSafe(PATHS.trace, null);
+      const feat = args.feature || (tr && tr.feature) || null;
+      if (feat) {
+        const candidate = path.join(STATE_DIR, 'specs', feat, 'SD.md');
+        if (fs.existsSync(candidate)) sdPath = candidate;
+      }
+    }
     if (sdPath) {
       if (!fs.existsSync(sdPath)) {
-        push('sd-gate', 'warn', `--sd file not found: ${sdPath}`, 'check the path and re-run');
+        push('sd-gate', 'warn', `SD file not found: ${sdPath}`, 'check the path and re-run');
       } else {
         let sdContent = '';
         try { sdContent = fs.readFileSync(sdPath, 'utf8'); } catch {}
@@ -2107,6 +2138,40 @@ const commands = {
           push('sd-gate', 'warn', `SD has ${todoCount} TODO:MANUAL-REVIEW marker(s) — not ready for parse_prd`, 'review SD before running parse_prd (Task Master)');
         } else {
           push('sd-gate', 'ok', `SD has 0 TODO:MANUAL-REVIEW markers — ready for parse_prd`, null);
+        }
+      }
+    }
+
+    // g2. Multi-repo — validate config.repos paths exist and are git repos.
+    const doctorCfg = readJsonSafe(PATHS.config, null);
+    if (doctorCfg && doctorCfg.repos && typeof doctorCfg.repos === 'object' && Object.keys(doctorCfg.repos).length) {
+      for (const [name, rel] of Object.entries(doctorCfg.repos)) {
+        const root = path.isAbsolute(rel) ? rel : path.resolve(process.cwd(), String(rel));
+        if (!fs.existsSync(root)) {
+          push('repos', 'warn', `config.repos["${name}"] → ${rel} does not exist`, 'fix the relative path in config.json or remove the entry');
+        } else if (!fs.existsSync(path.join(root, '.git'))) {
+          push('repos', 'warn', `config.repos["${name}"] → ${rel} is not a git repo`, 'point it at a git working tree (branch-ensure/commit operate per repo)');
+        } else {
+          push('repos', 'ok', `config.repos["${name}"] → ${rel} OK`, null);
+        }
+      }
+    }
+
+    // g3. currentTag drift (W3) — Task Master MCP state ops bind to the global
+    // currentTag; if it points at another feature, state ops silently hit the wrong tag.
+    {
+      const tr = readJsonSafe(PATHS.trace, null);
+      const activeFeat = args.feature || (tr && tr.feature) || null;
+      const tmTasksPath = path.join(process.cwd(), '.taskmaster', 'tasks', 'tasks.json');
+      if (activeFeat && fs.existsSync(tmTasksPath)) {
+        const tmRaw = readJsonSafe(tmTasksPath, null);
+        const tags = tmRaw && typeof tmRaw === 'object' && !Array.isArray(tmRaw) ? Object.keys(tmRaw) : [];
+        // currentTag is stored in TM state, not tasks.json; best-effort: if the active
+        // feature has its own tag but it's not the only one, remind to `use-tag`.
+        if (tags.includes(activeFeat) && tags.length > 1) {
+          push('current-tag', 'warn', `multiple TM tags present (${tags.join(', ')}); active feature is "${activeFeat}"`, `run \`task-master use-tag ${activeFeat}\` so MCP state ops (next_task/set_task_status) bind to this feature's tag`);
+        } else {
+          push('current-tag', 'ok', `TM tag aligned for "${activeFeat}"`, null);
         }
       }
     }
@@ -2303,8 +2368,13 @@ const commands = {
           covText = '';
         }
       }
-      // Tolerant regex: find any "NNN%" or "NNN.NN%" in the output
-      const pctMatch = covText.match(/(\d+(?:\.\d+)?)\s*%/);
+      // Prefer a coverage-labelled line; else take the LAST percentage. Never the
+      // first: build tools print progress like "Executing tasks [80%]" BEFORE the
+      // real coverage number, so a first-match would read the progress bar as coverage.
+      const labelled = covText.split(/\r?\n/).filter(l => /coverage|total|lines?|instructions?/i.test(l) && /\d+(?:\.\d+)?\s*%/.test(l));
+      const pctSource = labelled.length ? labelled[labelled.length - 1] : covText;
+      const allPct = [...pctSource.matchAll(/(\d+(?:\.\d+)?)\s*%/g)];
+      const pctMatch = allPct.length ? allPct[allPct.length - 1] : null;
       if (!pctMatch) {
         covStatus = 'warn';
         covDetail = `Could not parse a coverage percentage from output. Threshold is ${coverageThreshold}%.`;
@@ -2625,9 +2695,9 @@ const commands = {
       } else if (taskCounts.total === 0) {
         nextStep = `\`/sf:phase ${featureName}\` — it seeds tasks (parse-prd, agent-run) then implements.`;
       } else if (taskCounts.pending + taskCounts.inProgress > 0) {
-        nextStep = `\`/sf:phase ${featureName}\` — ${taskCounts.pending} pending · ${taskCounts.inProgress} wip${taskCounts.review ? ` · ${taskCounts.review} review (close when verified)` : ''}.`;
+        nextStep = `\`/sf:phase ${featureName}\` — ${taskCounts.pending} pending · ${taskCounts.inProgress} wip${taskCounts.review ? ` · ${taskCounts.review} review (\`/sf:phase\` re-drives these first)` : ''}.`;
       } else if (taskCounts.review > 0) {
-        nextStep = `${taskCounts.review} task(s) in review — implemented but not closed. Reconcile: \`run-checklist ${featureName} --tag regression\` then set them done (NOT \`/sf:phase\` — parse-prd already ran; next_task won't return review tasks).`;
+        nextStep = `${taskCounts.review} task(s) in \`review\` — \`/sf:phase ${featureName}\` picks them up first: re-runs each task's smoke → passed closes it, failed re-attempts (or halts to ask). \`next_task\` alone skips \`review\`, which is why re-running the loop is the right move, not a no-op.`;
       } else {
         nextStep = verified
           ? 'Done + verified — ship: stage, then `commit` skill (push).'

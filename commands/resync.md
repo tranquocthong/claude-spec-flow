@@ -44,11 +44,16 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
    ```
    Only if the CLI genuinely errors on a missing provider/key do you ask the user to run it in their terminal.
 
-6. **Re-open impacted done tasks**
-   For each task ID in `impacted.tasks` with status `done`:
+6. **Re-align ALL impacted tasks to the new spec — not just `done` ones.**
+   For each task ID in `impacted.tasks`, by current status:
+   - **`done`** → `set_task_status --status=review` (re-verify against the new SD).
+   - **`in-progress`** → **STOP and warn**: this task is being implemented RIGHT NOW against the OLD spec. Surface it to the user, set it back to `pending`, and make sure its executor re-reads the updated SD section before continuing — otherwise it ships stale behavior silently. This is the W2 hole: an in-flight task is the most dangerous to leave un-flagged.
+   - **`pending`** → leave `pending` (it hasn't been built yet, so it will pick up the new SD naturally), but **list it** in the resync report so the user sees the full blast radius.
    ```
-   mcp__task-master-ai__set_task_status --id=<id> --status=review
+   mcp__task-master-ai__set_task_status --id=<id> --status=review     # for each impacted `done` task
+   mcp__task-master-ai__set_task_status --id=<id> --status=pending    # for each impacted `in-progress` task (+ warn the user)
    ```
+   Report the impacted set grouped by prior status so nothing implemented-against-old-spec slips through.
 
 7. **Regenerate impacted checklist entries**
    Run `/sf:checklist` for the feature, preserving filled verify SQL for unaffected TCs. Re-scaffold only rows whose TC IDs appear in `impacted.tc`.

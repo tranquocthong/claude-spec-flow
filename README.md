@@ -9,7 +9,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
  └─────────────────────  /sf:change  (you change your mind) ───────────
 ```
 
-> v0.2.0 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
+> v0.3.0 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
 
 ## What you get
 
@@ -414,7 +414,8 @@ All dependencies are pinned — updates are deliberate and tested, never automat
 
 ## Status & known limits
 
-- Engine (21 `flow-tools` cmds) + hooks + commands + agents: **built & verified**.
+- Engine (22 `flow-tools` cmds) + hooks + commands + agents: **built & verified**.
+- **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
 - **In active dogfooding** — used on real projects; the v0.0.2x fixes (rename `/sf:change`, brownfield `/sf:bug`, interview-mode ingest, per-feature task tags, co-located CHECKLIST) all came from live-use feedback. Not yet a confident team-wide release.
 - SRS harvest is intentionally dirty; `sd-author` (AI) cleans it — don't judge the harvest output directly.
 - Needs **1–2 finetune loops on a real SRS** (adjust the `sd-author` prompt to your team's writing) before a confident team release.
