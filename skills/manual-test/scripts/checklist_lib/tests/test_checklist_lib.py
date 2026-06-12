@@ -268,5 +268,48 @@ class TestRequestHeaders(unittest.TestCase):
         self.assertEqual(captured["headers"].get("X-Client-Id"), "m1")
 
 
+class TestBaseUrlRef(unittest.TestCase):
+    """A test/setup can target a named alternate service via base_url_ref (multi-service).
+    Without it every request hits the default base_url → cross-service tests 404."""
+
+    def _ctx(self):
+        return {"db": "d", "scripts_dir": ".", "base_url": "http://va-ms:8092",
+                "base_urls": {"auth_base_url": "http://auth-ms:8081"},
+                "varstore": VarStore(), "tokens": {}, "doc": {}}
+
+    def test_ref_selects_alternate_base(self):
+        from checklist_lib import runner, http
+        captured = {}
+
+        def fake(method, url, headers, body):
+            captured["url"] = url
+            return (200, {}, "")
+
+        orig = http.do_request
+        http.do_request = fake
+        try:
+            runner._send_request({"method": "GET", "path": "/keys", "base_url_ref": "auth_base_url"}, self._ctx())
+        finally:
+            http.do_request = orig
+        self.assertIn("auth-ms:8081", captured["url"])
+
+    def test_default_base_when_no_ref(self):
+        from checklist_lib import runner, http
+        captured = {}
+        orig = http.do_request
+        http.do_request = lambda m, u, h, b: (captured.__setitem__("url", u) or (200, {}, ""))
+        try:
+            runner._send_request({"method": "GET", "path": "/p"}, self._ctx())
+        finally:
+            http.do_request = orig
+        self.assertIn("va-ms:8092", captured["url"])
+
+    def test_unknown_ref_is_an_error(self):
+        from checklist_lib import runner
+        kind, _, msg, _ = runner._send_request({"method": "GET", "path": "/p", "base_url_ref": "nope"}, self._ctx())
+        self.assertEqual(kind, "error")
+        self.assertIn("base_url_ref", msg)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

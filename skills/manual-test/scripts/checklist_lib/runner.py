@@ -35,6 +35,19 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
+def _resolve_base(spec, ctx):
+    """Pick the base URL for a request/setup step. `base_url_ref: <name>` selects a
+    named alternate from config.base_urls (multi-service); default is config.base_url.
+    Returns (url, error) — error set only when a ref is given but undefined."""
+    ref = spec.get("base_url_ref")
+    if not ref:
+        return ctx["base_url"], None
+    url = (ctx.get("base_urls") or {}).get(ref)
+    if not url:
+        return None, f"unknown base_url_ref '{ref}' — define it under config.base_urls"
+    return url, None
+
+
 def _send_request(req, ctx):
     """Execute the request. Returns (kind, status, body, raw) or kafka (ok, msg)."""
     vs = ctx["varstore"]
@@ -44,6 +57,9 @@ def _send_request(req, ctx):
 
     method = (req.get("method") or "GET").upper()
     path = vs.expand(req.get("path", ""))
+    base, berr = _resolve_base(req, ctx)
+    if berr:
+        return ("error", None, berr, None)
     headers = {}
     tname = req.get("token")
     if tname:
@@ -59,7 +75,7 @@ def _send_request(req, ctx):
     body = req.get("body")
     if isinstance(body, str):
         body = vs.expand(body)
-    url = http.build_url(ctx["base_url"], path, vs.expand_obj(req.get("query") or {}))
+    url = http.build_url(base, path, vs.expand_obj(req.get("query") or {}))
     status, jbody, raw = http.do_request(method, url, headers, body)
     return ("http", status, jbody, raw)
 
@@ -97,9 +113,12 @@ def main(argv=None):
     cfg = doc.get("config", {}) or {}
     base_url = args.base_url or vs.expand(cfg.get("base_url", "http://localhost:8081"))
     db_name = vs.expand(str((cfg.get("db") or {}).get("database", "${DB_NAME:-postgres}")))
+    # Multi-service: named alternate base URLs (e.g. {auth_base_url: ...}). A test or
+    # setup step picks one with `base_url_ref: <name>`; default stays `base_url`.
+    base_urls = {k: vs.expand(str(v)) for k, v in (cfg.get("base_urls") or {}).items()}
 
     ctx = {"db": db_name, "scripts_dir": args.scripts_dir, "base_url": base_url,
-           "varstore": vs, "tokens": {}, "doc": doc}
+           "base_urls": base_urls, "varstore": vs, "tokens": {}, "doc": doc}
 
     print(f"checklist: {args.checklist}")
     print(f"base_url:  {base_url}")

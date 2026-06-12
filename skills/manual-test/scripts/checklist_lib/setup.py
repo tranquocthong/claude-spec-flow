@@ -84,7 +84,11 @@ def _do_http(sb, ctx, dry_run):
     body = h.get("body")
     if isinstance(body, str):
         body = vs.expand(body)
-    url = http.build_url(ctx["base_url"], path, vs.expand_obj(h.get("query") or {}))
+    ref = h.get("base_url_ref")
+    base = (ctx.get("base_urls") or {}).get(ref) if ref else ctx["base_url"]
+    if ref and not base:
+        raise RuntimeError(f"unknown base_url_ref '{ref}' — define it under config.base_urls")
+    url = http.build_url(base, path, vs.expand_obj(h.get("query") or {}))
     status, jbody, _ = http.do_request(method, url, headers, body)
     if status >= 400:
         raise RuntimeError(f"setup http {method} {path} → {status}")
