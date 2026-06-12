@@ -51,6 +51,11 @@ def _send_request(req, ctx):
             return ("error", None, f"unknown token '{tname}'", None)
         k, v = ctx["tokens"][tname]
         headers[k] = v
+    # Explicit per-test headers (var-expanded). Applied after the token so a test
+    # that sets a header wins. Without this, signed requests (X-Client-Id /
+    # X-Timestamp / X-Signature) silently lose every custom header.
+    for hk, hv in (req.get("headers") or {}).items():
+        headers[hk] = vs.expand(str(hv))
     body = req.get("body")
     if isinstance(body, str):
         body = vs.expand(body)

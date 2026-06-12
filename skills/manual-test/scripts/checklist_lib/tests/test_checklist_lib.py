@@ -240,5 +240,33 @@ class TestExecSetupStep(unittest.TestCase):
         self.assertIsNone(err)  # not executed under dry-run
 
 
+class TestRequestHeaders(unittest.TestCase):
+    """A test's request.headers must reach the HTTP call, var-expanded — without this
+    signed requests silently lose X-Client-Id / X-Timestamp / X-Signature."""
+
+    def test_custom_headers_forwarded_and_expanded(self):
+        from checklist_lib import runner, http
+        captured = {}
+
+        def fake(method, url, headers, body):
+            captured["headers"] = dict(headers)
+            return (200, {}, "")
+
+        orig = http.do_request
+        http.do_request = fake
+        try:
+            vs = VarStore()
+            vs.set("SIG", "abc123")
+            ctx = {"db": "d", "scripts_dir": ".", "base_url": "http://x",
+                   "varstore": vs, "tokens": {}, "doc": {}}
+            req = {"method": "GET", "path": "/p",
+                   "headers": {"X-Signature": "${SIG}", "X-Client-Id": "m1"}}
+            runner._send_request(req, ctx)
+        finally:
+            http.do_request = orig
+        self.assertEqual(captured["headers"].get("X-Signature"), "abc123")
+        self.assertEqual(captured["headers"].get("X-Client-Id"), "m1")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
