@@ -5,9 +5,15 @@ Each step is one of:
   - seed: name            run the named snippet from the top-level `seed:` map
   - http: {...}           call an endpoint (optional `capture: {VAR: "$.json.path"}`)
   - redis: |              run redis-cli line(s)
+  - exec: "cmd"           run a project command; capture stdout into vars
+                          (optional `capture: {VAR: "$.json.path"}` if the command
+                          prints JSON, else `{VAR: stdout}` captures the whole output).
+                          Generic escape hatch: request signing, token minting, any
+                          pre-compute lives in the PROJECT's script — not in this runner.
 
 `ctx` carries: db, scripts_dir, base_url, varstore, tokens, doc.
 """
+import json
 import subprocess
 
 from . import http, jsonpath, sql
@@ -38,6 +44,8 @@ def _run_one(sb, ctx, dry_run):
         _do_http(sb, ctx, dry_run)
     elif "redis" in sb:
         _do_redis(sb, ctx, dry_run)
+    elif "exec" in sb:
+        _do_exec(sb, ctx, dry_run)
 
 
 def _do_sql(sb, ctx, dry_run):
@@ -83,6 +91,30 @@ def _do_http(sb, ctx, dry_run):
     for var, expr in (h.get("capture") or {}).items():
         vals = jsonpath.resolve(vs.expand(expr), jbody) if jbody is not None else []
         vs.set(var, vals[0] if vals else "")
+
+
+def _do_exec(sb, ctx, dry_run):
+    if dry_run:
+        return
+    vs = ctx["varstore"]
+    cmd = vs.expand(sb["exec"])
+    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"setup exec failed ({proc.returncode}): {cmd}\n{(proc.stderr or '').strip()[:200]}")
+    out = (proc.stdout or "").strip()
+    cap = sb.get("capture") or {}
+    parsed = None
+    if any(isinstance(e, str) and e.startswith("$") for e in cap.values()):
+        try:
+            parsed = json.loads(out)
+        except Exception:
+            parsed = None
+    for var, expr in cap.items():
+        if isinstance(expr, str) and expr.startswith("$") and parsed is not None:
+            vals = jsonpath.resolve(vs.expand(expr), parsed)
+            vs.set(var, vals[0] if vals else "")
+        else:
+            vs.set(var, out)  # capture whole stdout
 
 
 def _do_redis(sb, ctx, dry_run):

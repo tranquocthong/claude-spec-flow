@@ -203,5 +203,42 @@ class TestSqlScalarVerify(unittest.TestCase):
         self.assertIsNone(sql._check_scalar("x", None, self.vs)[0])
 
 
+class TestExecSetupStep(unittest.TestCase):
+    """exec: runs a project command, captures stdout (whole or JSON-path) into vars.
+    Generic escape hatch for request signing / token minting — runner stays generic."""
+
+    def _ctx(self):
+        return {"db": "d", "scripts_dir": ".", "base_url": "", "varstore": VarStore(), "tokens": {}, "doc": {}}
+
+    def test_capture_whole_stdout(self):
+        from checklist_lib import setup
+        ctx = self._ctx()
+        err = setup.run_steps([{"exec": "printf SIGVAL", "capture": {"SIG": "stdout"}}], ctx)
+        self.assertIsNone(err)
+        self.assertEqual(ctx["varstore"].get("SIG"), "SIGVAL")
+
+    def test_capture_json_path(self):
+        from checklist_lib import setup
+        ctx = self._ctx()
+        err = setup.run_steps(
+            [{"exec": "printf '{\"signature\":\"abc\",\"timestamp\":\"123\"}'",
+              "capture": {"SIG": "$.signature", "TS": "$.timestamp"}}], ctx)
+        self.assertIsNone(err)
+        self.assertEqual(ctx["varstore"].get("SIG"), "abc")
+        self.assertEqual(ctx["varstore"].get("TS"), "123")
+
+    def test_nonzero_exit_is_an_error(self):
+        from checklist_lib import setup
+        err = setup.run_steps([{"exec": "exit 7"}], self._ctx())
+        self.assertIsNotNone(err)
+        self.assertIn("exec failed", err)
+
+    def test_dry_run_skips(self):
+        from checklist_lib import setup
+        ctx = self._ctx()
+        err = setup.run_steps([{"exec": "exit 7"}], ctx, dry_run=True)
+        self.assertIsNone(err)  # not executed under dry-run
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
