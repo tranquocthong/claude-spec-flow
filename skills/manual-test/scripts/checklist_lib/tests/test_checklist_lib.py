@@ -273,8 +273,8 @@ class TestBaseUrlRef(unittest.TestCase):
     Without it every request hits the default base_url → cross-service tests 404."""
 
     def _ctx(self):
-        return {"db": "d", "scripts_dir": ".", "base_url": "http://va-ms:8092",
-                "base_urls": {"auth_base_url": "http://auth-ms:8081"},
+        return {"db": "d", "scripts_dir": ".", "base_url": "http://billing-svc:8092",
+                "base_urls": {"auth_base_url": "http://auth-svc:8081"},
                 "varstore": VarStore(), "tokens": {}, "doc": {}}
 
     def test_ref_selects_alternate_base(self):
@@ -291,7 +291,7 @@ class TestBaseUrlRef(unittest.TestCase):
             runner._send_request({"method": "GET", "path": "/keys", "base_url_ref": "auth_base_url"}, self._ctx())
         finally:
             http.do_request = orig
-        self.assertIn("auth-ms:8081", captured["url"])
+        self.assertIn("auth-svc:8081", captured["url"])
 
     def test_default_base_when_no_ref(self):
         from checklist_lib import runner, http
@@ -302,7 +302,7 @@ class TestBaseUrlRef(unittest.TestCase):
             runner._send_request({"method": "GET", "path": "/p"}, self._ctx())
         finally:
             http.do_request = orig
-        self.assertIn("va-ms:8092", captured["url"])
+        self.assertIn("billing-svc:8092", captured["url"])
 
     def test_unknown_ref_is_an_error(self):
         from checklist_lib import runner
