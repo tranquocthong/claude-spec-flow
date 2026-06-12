@@ -356,3 +356,54 @@ test('verify-collect errors clearly when there is no JSON result line', () => {
   assert.equal(r.ok, false);
   assert.match(r.error, /NO_JSON_RESULTS/);
 });
+
+// ---------------------------------------------------------------------------
+// Language pack — SRS-parsing keywords are DATA, loaded per config.language
+// ---------------------------------------------------------------------------
+
+const VI_NFR_SRS = [
+  '# Feature: demo', '',
+  '## 6. Yêu cầu phi chức năng', '',  // VI "phi chức năng" → nfr role (only in vi pack)
+  '| Yêu cầu | Mục | Mục tiêu |',
+  '| --- | --- | --- |',
+  '| Hiệu năng | Perf | p99 < 200ms |', '',
+].join('\n');
+
+test('lang pack: a VI NFR heading is harvested under config.language=vi', () => {
+  const dir = tmpProject();
+  run(['init-project', '--stack', 'node', '--language', 'vi'], dir);
+  const srs = path.join(dir, 'srs.md');
+  fs.writeFileSync(srs, VI_NFR_SRS);
+  const r = run(['sd-skeleton', '--srs', srs, '--feature', 'demo', '--dry-run'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.stats.nfr, 1, 'vi pack classifies "phi chức năng" → NFR table harvested');
+});
+
+test('lang pack: the same VI NFR heading is NOT classified under config.language=en (config-scoped)', () => {
+  const dir = tmpProject();
+  run(['init-project', '--stack', 'node'], dir);  // default en
+  const srs = path.join(dir, 'srs.md');
+  fs.writeFileSync(srs, VI_NFR_SRS);
+  const r = run(['sd-skeleton', '--srs', srs, '--feature', 'demo', '--dry-run'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.stats.nfr, 0, 'en pack does not know "phi chức năng" → not harvested (declare language to enable)');
+});
+
+test('lang pack: a project-local language file extends parsing with no engine change', () => {
+  const dir = tmpProject();
+  run(['init-project', '--stack', 'node'], dir);
+  // Point config at a custom language and drop a project-local pack for it.
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.language = 'xx';
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  const langDir = path.join(dir, '.spec-flow', 'templates', 'lang');
+  fs.mkdirSync(langDir, { recursive: true });
+  fs.writeFileSync(path.join(langDir, 'xx.json'), JSON.stringify({ headingRoles: { nfr: ['ZZNFRZZ'] } }));
+  const srs = path.join(dir, 'srs.md');
+  fs.writeFileSync(srs, ['# Feature: demo', '', '## 6. ZZNFRZZ block', '',
+    '| Req | Cat | Target |', '| --- | --- | --- |', '| fast | Perf | x |', ''].join('\n'));
+  const r = run(['sd-skeleton', '--srs', srs, '--feature', 'demo', '--dry-run'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.stats.nfr, 1, 'custom xx.json keyword classifies the NFR heading — no engine edit');
+});

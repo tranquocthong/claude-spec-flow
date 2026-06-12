@@ -124,17 +124,48 @@ function parseHeadings(md) {
   return { lines, hs };
 }
 const bodyOf = (lines, h) => lines.slice(h.bodyStart, h.bodyEnd);
-// SRS numbering is unreliable ("muôn hình vạn trạng") — classify headings by keyword instead.
-const ROLE_KW = {
-  flow: /sơ đồ|sequence|luồng/i,
-  state: /trạng thái|state machine/i,
-  userstories: /user stor|yêu cầu của người dùng/i,
-  nfr: /phi chức năng|non-functional/i,
-  detail: /yêu cầu chi tiết|logic nghiệp vụ|functional requirement|yêu cầu cụ thể/i,
-  frontend: /giao diện|frontend|wireframe|màn hình/i,
-  summary: /tổng quan|summary/i,
-};
-function classifyHeading(title) { for (const [role, re] of Object.entries(ROLE_KW)) if (re.test(title)) return role; return null; }
+// ---- Language pack (SRS-parsing keywords = DATA, not engine logic) -------
+// An SRS is free-form and in the user's language. Keyword lists for parsing it
+// live in templates/lang/<lang>.json (project .spec-flow/templates/lang/ wins).
+// Load `en` as base, merge config.language on top (union). New language = new
+// JSON file, no engine edit. (The generated SD is canonical English → SD-side
+// table parsing stays hardcoded; this pack is SRS-only.)
+let _LANG = null;
+function langPack() {
+  if (_LANG) return _LANG;
+  const loadFor = (l) => {
+    for (const dir of [path.join(STATE_DIR, 'templates', 'lang'), path.join(PLUGIN_ROOT, 'templates', 'lang')]) {
+      const j = readJsonSafe(path.join(dir, `${l}.json`), null);
+      if (j) return j;
+    }
+    return {};
+  };
+  const lang = (readJsonSafe(PATHS.config, null) || {}).language || 'en';
+  const base = loadFor('en');
+  const over = lang && lang !== 'en' ? loadFor(lang) : {};
+  // Deep-union the two packs (arrays concatenated, nested objects merged).
+  const merge = (a, b) => {
+    const out = {};
+    for (const k of new Set([...Object.keys(a || {}), ...Object.keys(b || {})])) {
+      const av = (a || {})[k], bv = (b || {})[k];
+      if (Array.isArray(av) || Array.isArray(bv)) out[k] = [...(av || []), ...(bv || [])];
+      else if (av && typeof av === 'object') out[k] = merge(av, bv || {});
+      else out[k] = bv !== undefined ? bv : av;
+    }
+    return out;
+  };
+  _LANG = merge(base, over);
+  return _LANG;
+}
+// Build a case-insensitive alternation regex from a keyword list (never-match if empty).
+function kwRe(list, flags = 'i') { return (list && list.length) ? new RegExp(list.join('|'), flags) : /(?!)/; }
+
+// SRS numbering is unreliable — classify headings by keyword (from the lang pack) instead.
+function classifyHeading(title) {
+  const roles = langPack().headingRoles || {};
+  for (const role of Object.keys(roles)) if (kwRe(roles[role]).test(title)) return role;
+  return null;
+}
 function findHeading(hs, role) { return hs.find(h => classifyHeading(h.title) === role) || null; }
 function findTableByHeader(tables, re) { return tables.find(t => re.test(t.headers.join(' '))) || null; }
 
@@ -182,11 +213,13 @@ function parseUserStories(md) {
     for (let j = i + 1; j < hs.length; j++) { if (hs[j].level <= hs[i].level) { end = hs[j].line; break; } }
     const block = lines.slice(hs[i].line, end).join('\n');
     const name = (m[2] || '').replace(/\**/g, '').trim() || `US-${m[1]}`;
-    const role = (block.match(/Là\s+(?:một\s+)?([^,\n…]+?)\s*,/i) || [])[1];
-    const want = (block.match(/Tôi\s+muốn\s*[,:]?\s*([^\n…]+)/i) || [])[1];
-    const soThat = (block.match(/Để\s+(?:tôi\s+có\s+thể\s*)?[,:]?\s*([^\n…]+)/i) || [])[1];
-    const acceptance = extractBulletsAfter(block, /(tiêu chí nghiệm thu|acceptance)/i, /(edge case|hy hữu|trường hợp hy)/i);
-    const edges = extractBulletsAfter(block, /(edge case|hy hữu|trường hợp hy)/i, null);
+    const us = langPack().userStory || {};
+    const role = (block.match(new RegExp(`(?:${(us.role || ['As an?']).join('|')})\\s+([^,\\n…]+?)\\s*,`, 'i')) || [])[1];
+    const want = (block.match(new RegExp(`(?:${(us.want || ['I want']).join('|')})\\s*[,:]?\\s*([^\\n…]+)`, 'i')) || [])[1];
+    const soThat = (block.match(new RegExp(`(?:${(us.soThat || ['so that']).join('|')})\\s*[,:]?\\s*([^\\n…]+)`, 'i')) || [])[1];
+    const edgeRe = kwRe(us.edgeStart || ['edge case']);
+    const acceptance = extractBulletsAfter(block, kwRe(us.acceptanceStart || ['acceptance']), edgeRe);
+    const edges = extractBulletsAfter(block, edgeRe, null);
     stories.push({ id: `US-${m[1]}`, name, role: trimOrNull(role), want: trimOrNull(want), soThat: trimOrNull(soThat), acceptance, edges });
   }
   return stories;
@@ -206,9 +239,10 @@ function extractBulletsAfter(block, startRe, endRe) {
 
 /** Infer design type from flow text + story names (numbering-agnostic). */
 function inferDesignType(text) {
-  const t = (text || '').toLowerCase();
-  const internal = /async|bất đồng bộ|scheduler|cron|batch|worker|consumer|job|kafka|event|rà soát|tác vụ|định kỳ/.test(t);
-  const api = /client|user|mobile|portal|màn hình|giao diện|frontend|app|web|nhân viên/.test(t);
+  const t = (text || '');
+  const dt = langPack().designType || {};
+  const internal = kwRe(dt.internal || []).test(t);
+  const api = kwRe(dt.api || []).test(t);
   if (internal && api) return 'hybrid';
   if (internal) return 'internal';
   if (api) return 'api';
@@ -225,10 +259,12 @@ function parseSrs(md) {
   const tables = parseAllTables(lines);
   let featureName = (md.match(/Feature:\s*([^\n#*]+)/i) || [])[1];
   if (!featureName && hs[0]) featureName = hs[0].title;
-  const revision = findTableByHeader(tables, /phiên bản|version/i);
-  const glossary = findTableByHeader(tables, /thuật ngữ|term/i);
-  const stateTable = findTableByHeader(tables, /(trạng thái|state).*(ý nghĩa|meaning|description)/i);
-  const businessLogic = findTableByHeader(tables, /quy tắc nghiệp vụ|tên logic|business logic/i);
+  const th = langPack().tableHeaders || {};
+  const stateRe = new RegExp(`(?:${(th.stateName || ['state']).join('|')}).*(?:${(th.stateMeaning || ['meaning', 'description']).join('|')})`, 'i');
+  const revision = findTableByHeader(tables, kwRe(th.revision || ['version']));
+  const glossary = findTableByHeader(tables, kwRe(th.glossary || ['term']));
+  const stateTable = findTableByHeader(tables, stateRe);
+  const businessLogic = findTableByHeader(tables, kwRe(th.businessLogic || ['business logic']));
   const stories = parseUserStories(md);
   const nfrSec = findHeading(hs, 'nfr');
   const nfr = nfrSec ? parseFirstTable(bodyOf(lines, nfrSec)) : null;
@@ -447,11 +483,6 @@ function genSd(srs, opts) {
 //  generated (§5.1 FR + §13.2 TC tables) deterministically.
 // =====================================================================
 const STATE_FILE = path.join(STATE_DIR, 'STATE.md');
-const COMPLEXITY_KEYWORDS = [
-  /callback/i, /idempoten/i, /migrat/i, /state|trạng thái/i, /tích hợp|integration|gateway/i,
-  /async|timeout/i, /concurren|đồng thời/i, /transaction|rollback/i, /webhook|kafka|event/i,
-  /encrypt|mã hóa|security|bảo mật/i,
-];
 
 /** Find the §5.1 FR table and §13.2 TC table inside a generated SD. */
 function readSdTables(sdPath) {
@@ -463,7 +494,9 @@ function readSdTables(sdPath) {
 }
 function scoreComplexity(text) {
   let s = 2;
-  for (const re of COMPLEXITY_KEYWORDS) if (re.test(text)) s += 1;
+  // complexity is a list of GROUPS (synonyms); each group present adds 1 point —
+  // mirrors the prior per-regex scoring where "integration|gateway" counted once.
+  for (const group of (langPack().complexity || [])) { if (kwRe(group).test(text)) s += 1; }
   if (text.length > 80) s += 1;
   if (text.length > 140) s += 1;
   return Math.max(1, Math.min(10, s));

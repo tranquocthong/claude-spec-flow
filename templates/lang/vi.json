@@ -1,0 +1,31 @@
+{
+  "_doc": "Vietnamese SRS-parsing keywords. Merged on top of en.json (union). Add other languages as <lang>.json with the same shape.",
+  "headingRoles": {
+    "flow": ["sơ đồ", "luồng"],
+    "state": ["trạng thái"],
+    "userstories": ["yêu cầu của người dùng"],
+    "nfr": ["phi chức năng"],
+    "detail": ["yêu cầu chi tiết", "logic nghiệp vụ", "yêu cầu cụ thể"],
+    "frontend": ["giao diện", "màn hình"],
+    "summary": ["tổng quan"]
+  },
+  "tableHeaders": {
+    "revision": ["phiên bản"],
+    "glossary": ["thuật ngữ"],
+    "stateName": ["trạng thái"],
+    "stateMeaning": ["ý nghĩa"],
+    "businessLogic": ["quy tắc nghiệp vụ", "tên logic"]
+  },
+  "designType": {
+    "internal": ["bất đồng bộ", "rà soát", "tác vụ", "định kỳ"],
+    "api": ["màn hình", "giao diện", "nhân viên"]
+  },
+  "complexity": [["trạng thái"], ["tích hợp"], ["đồng thời"], ["mã hóa", "bảo mật"]],
+  "userStory": {
+    "role": ["Là"],
+    "want": ["Tôi muốn"],
+    "soThat": ["Để"],
+    "acceptanceStart": ["tiêu chí nghiệm thu"],
+    "edgeStart": ["hy hữu", "trường hợp hy"]
+  }
+}

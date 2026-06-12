@@ -1,0 +1,31 @@
+{
+  "_doc": "Language pack — keyword DATA for parsing a free-form SRS (which is in the user's language). The engine loads `en` as the base, then merges the project's `config.language` pack on top (union of keywords). Add `<lang>.json` here (or in a project's .spec-flow/templates/lang/) to support a new language; no engine change needed. This covers ONLY SRS parsing — the generated SD keeps canonical-English structure, so SD-side table parsing stays hardcoded.",
+  "headingRoles": {
+    "flow": ["sequence"],
+    "state": ["state machine"],
+    "userstories": ["user stor"],
+    "nfr": ["non-functional"],
+    "detail": ["functional requirement"],
+    "frontend": ["frontend", "wireframe"],
+    "summary": ["summary"]
+  },
+  "tableHeaders": {
+    "revision": ["version"],
+    "glossary": ["term"],
+    "stateName": ["state"],
+    "stateMeaning": ["meaning", "description"],
+    "businessLogic": ["business logic"]
+  },
+  "designType": {
+    "internal": ["async", "scheduler", "cron", "batch", "worker", "consumer", "job", "kafka", "event"],
+    "api": ["client", "user", "mobile", "portal", "frontend", "app", "web"]
+  },
+  "complexity": [["callback"], ["idempoten"], ["migrat"], ["state"], ["integration", "gateway"], ["async", "timeout"], ["concurren"], ["transaction", "rollback"], ["webhook", "kafka", "event"], ["encrypt", "security"]],
+  "userStory": {
+    "role": ["As an?"],
+    "want": ["I want"],
+    "soThat": ["so that"],
+    "acceptanceStart": ["acceptance"],
+    "edgeStart": ["edge case"]
+  }
+}
