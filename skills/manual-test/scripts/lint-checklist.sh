@@ -90,7 +90,9 @@ for si, suite in enumerate(suites):
         )
         has_verify = bool(t.get("verify"))
         if not (has_verify or has_body or has_assert) and "no-verify" not in (t.get("tags") or []):
-            issues.append(f"$.suites[{si}].tests[{ti}] ({t.get('id','?')}): no assertion. Add expect.body / body_contains / json_path (read/transform), a verify: block (mutation), expect.poll (async), OR tag [no-verify].")
+            has_status = "status" in exp
+            hint = "a bare expect.status is not a sufficient assertion — also assert the response body" if has_status else "add an assertion"
+            issues.append(f"$.suites[{si}].tests[{ti}] ({t.get('id','?')}): {hint}. Use expect.body / body_contains / json_path (incl. error-body for rejection tests), a verify: block (mutation), expect.poll (async), OR tag [no-verify] for assertion-only/status-only checks.")
 
 if issues:
     for it in issues:

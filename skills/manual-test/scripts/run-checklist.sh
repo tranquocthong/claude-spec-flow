@@ -65,13 +65,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Resolve checklist path
+# Resolve checklist path: literal path, spec-flow feature, or standalone feature.
 if [[ -f "$ARG" ]]; then
   CHECKLIST="$ARG"
+elif [[ -f ".spec-flow/specs/$ARG/CHECKLIST.yaml" ]]; then
+  CHECKLIST=".spec-flow/specs/$ARG/CHECKLIST.yaml"   # spec-flow layout (feature name)
 elif [[ -f ".claude/docs/manual-tests/features/$ARG/CHECKLIST.yaml" ]]; then
-  CHECKLIST=".claude/docs/manual-tests/features/$ARG/CHECKLIST.yaml"
+  CHECKLIST=".claude/docs/manual-tests/features/$ARG/CHECKLIST.yaml"   # standalone layout
 else
-  err "checklist not found: $ARG"
+  err "checklist not found: $ARG (tried literal path, .spec-flow/specs/$ARG/, .claude/docs/manual-tests/features/$ARG/)"
   exit 2
 fi
 
