@@ -507,9 +507,24 @@ function routeFor(score) {
   if (score <= 7) return 'expand';
   return 'deep';
 }
-/** Link TC ids to an FR requirement by matching the (de-prefixed) text. */
-function tcIdsForReq(tc, req) {
+/** Link TC ids to an FR requirement.
+ *  Prefers explicit FR-ref column match (when the TC table has a dedicated "FR" column)
+ *  over fuzzy text match, which mis-fires on 6-col tables where tr[2] is "Test Case"
+ *  description, not the FR id. Falls back to fuzzy if no FR column or no explicit match.
+ */
+function tcIdsForReq(tc, req, frId) {
   if (!tc) return [];
+  // Explicit match via FR-ref column (header named "FR", "FR Ref", "FR ID", etc.)
+  const headers = (tc.headers || []).map(h => String(h || '').toLowerCase().trim());
+  const frColIdx = headers.findIndex(h => /^fr(\s*(ref|id|#))?$/.test(h));
+  if (frId && frColIdx >= 0) {
+    const explicit = tc.rows.filter(tr => {
+      const cell = (tr[frColIdx] || '').trim();
+      return cell.split(/[,;\s]+/).map(s => s.trim()).some(s => s.toLowerCase() === frId.toLowerCase());
+    }).map(tr => tr[0]);
+    if (explicit.length > 0) return explicit;
+  }
+  // Fallback: fuzzy text match against "Test Case" column (index 2)
   const core = req.replace(/^handle edge:\s*/i, '').trim().toLowerCase();
   return tc.rows.filter(tr => {
     const t = (tr[2] || '').replace(/^edge:\s*/i, '').trim().toLowerCase();
@@ -1174,18 +1189,19 @@ const commands = {
 
     // FR <-> TC links via tcIdsForReq
     for (const fr of frNodes) {
-      const tcIds = tcIdsForReq(tcTable, fr.text);
+      const tcIds = tcIdsForReq(tcTable, fr.text, fr.id);
       for (const tcId of tcIds) {
         links.push({ from: fr.id, to: tcId, type: 'fr-tc' });
       }
     }
 
-    // source (US/BL) -> FR links
+    // source (US/BL/FR/AC reference) -> FR links
+    // Accepts clean IDs ("US-1", "BL-001") and embedded refs ("SRS §5.1 FR-1").
     for (const fr of frNodes) {
       const src = fr.source;
-      if (src && /^(US|BL|NFR)-?\d+/i.test(src)) {
-        links.push({ from: src, to: fr.id, type: 'src-fr' });
-      }
+      if (!src) continue;
+      const m = src.match(/\b(US|BL|NFR|FR|AC)-?\d+/i);
+      if (m) links.push({ from: m[0].toUpperCase(), to: fr.id, type: 'src-fr' });
     }
 
     // NFR -> FR / TC links: any FR or TC whose text/source references the NFR id

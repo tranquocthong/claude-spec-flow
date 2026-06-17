@@ -160,6 +160,84 @@ test('REGRESSION trace-build: §13.2 "Expected" resolved by header on a 6-col ta
   );
 });
 
+test('REGRESSION trace-build: fr-tc links via explicit FR-ref column (6-col TC table)', () => {
+  // Pre-fix bug: tcIdsForReq matched tr[2] ("Test Case" description) against fr.text
+  // via fuzzy includes — always 0 links on real SDs where descriptions differ.
+  // Fix: resolve the "FR" column by header name and match fr.id explicitly.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo',
+    '',
+    '## 5.1 Functional Requirements',
+    '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | System validates webhook HMAC signature | Must Have | SRS §5.1 FR-1 |',
+    '| FR-002 | System returns 200 on valid signature | Must Have | SRS §5.1 FR-2 |',
+    '',
+    '## 13.2 Test Cases',
+    '',
+    '| TC ID | Flow | Test Case | Input/Condition | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid signature accepted | valid HMAC header | 200 OK | FR-001 |',
+    '| TC-002 | Happy path | Valid signature returns body | valid HMAC header | response body present | FR-001, FR-002 |',
+    '| TC-003 | Error | Invalid signature rejected | bad HMAC header | 401 Unauthorized | FR-001 |',
+    '',
+  ].join('\n'));
+  const r = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'trace-build ok');
+  const trace = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'trace.json'), 'utf8'));
+  const frTcLinks = trace.links.filter(l => l.type === 'fr-tc');
+  // FR-001 must link to TC-001, TC-002, TC-003 (all reference FR-001)
+  const fr001TcIds = frTcLinks.filter(l => l.from === 'FR-001').map(l => l.to).sort();
+  assert.deepEqual(fr001TcIds, ['TC-001', 'TC-002', 'TC-003'], 'FR-001 links to all 3 TCs via explicit FR column');
+  // FR-002 must link to TC-002 only
+  const fr002TcIds = frTcLinks.filter(l => l.from === 'FR-002').map(l => l.to);
+  assert.deepEqual(fr002TcIds, ['TC-002'], 'FR-002 links to TC-002 via multi-value FR column');
+});
+
+test('REGRESSION trace-build: src-fr links from embedded source refs ("SRS §5.1 FR-N")', () => {
+  // Pre-fix bug: src-fr regex /^(US|BL|NFR)-?\d+/i only matched sources starting
+  // with those prefixes — "SRS §5.1 FR-1" was silently skipped, linkCount=0.
+  // Fix: \b match extracts any FR/US/BL/AC id embedded anywhere in the source.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo',
+    '',
+    '## 5.1 Functional Requirements',
+    '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Validate HMAC signature | Must Have | SRS §5.1 FR-1 |',
+    '| FR-002 | Return signed response | Must Have | US-5 |',
+    '',
+    '## 13.2 Test Cases',
+    '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid request | 200 OK | FR-001 |',
+    '',
+  ].join('\n'));
+  const r = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'trace-build ok');
+  const trace = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'trace.json'), 'utf8'));
+  const srcFrLinks = trace.links.filter(l => l.type === 'src-fr');
+  // FR-001 source "SRS §5.1 FR-1" → extracts FR-1, creates link
+  const fr001src = srcFrLinks.find(l => l.to === 'FR-001');
+  assert.ok(fr001src, 'FR-001 gets a src-fr link from embedded "SRS §5.1 FR-1" source');
+  assert.equal(fr001src.from, 'FR-1', 'extracted id is normalized');
+  // FR-002 source "US-5" → still works as before
+  const fr002src = srcFrLinks.find(l => l.to === 'FR-002');
+  assert.ok(fr002src, 'FR-002 gets a src-fr link from "US-5"');
+  assert.equal(fr002src.from, 'US-5', 'clean US-N id preserved');
+});
+
 test('REGRESSION branch-ensure: git repo with no commits → NO_COMMITS (not NOT_A_GIT_REPO)', () => {
   const dir = tmpProject();
   execFileSync('git', ['init', '-q'], { cwd: dir });
