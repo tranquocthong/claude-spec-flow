@@ -78,9 +78,10 @@ Returns per-FR complexity scores (1–10):
    If executor did not call `trace-link`, run it from the executor's reported file list:
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-link \
-     --task <id> --feature <feature> [--fr <FR-id-if-known>] [--repo <service>] \
+     --task <id> --feature <feature> --fr <FR-id> [--repo <service>] \
      --files "<comma-separated relative paths changed>"
    ```
+   **Always pass `--fr <FR-id>`** — the task implements an FR row in the SD (the SD/route output tells you which). This seeds the `fr→task` link that lets a later `/sf:change` on that FR **auto-reopen this exact task** via `trace-impact`; omit it and the FR change resolves to `tasks=[]` and someone has to map FR→task by hand. Only drop `--fr` for a pure infra/chore task with no FR (then say so).
    Multi-repo: pass `--repo <service>` (the repo the files live in) so paths are stored qualified.
    Then rebuild trace:
    ```

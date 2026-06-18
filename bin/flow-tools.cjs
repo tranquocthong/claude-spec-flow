@@ -1272,6 +1272,14 @@ const commands = {
       }
     }
 
+    // FR-task links: so trace-impact (and /sf:change) can reach the tasks that
+    // implemented a changed FR. Without this, an FR-id changeset resolves to
+    // tasks=[] and the user has to map FR→task by hand. Source = file-links
+    // entries carrying both task + fr (set by `trace-link --fr ... --task ...`).
+    for (const [taskId, frId] of Object.entries(taskToFrMap)) {
+      addLink(frId, taskId, 'fr-task');
+    }
+
     ensureDir(PATHS.stateDir);
     const trace = {
       feature,
@@ -1406,6 +1414,13 @@ const commands = {
           // reverse: if TC is impacted, mark FR
           if (impacted.tc.includes(to) && !impacted.fr.includes(from)) {
             addImpacted('fr', from, `transitive tc-fr from ${to}`);
+            changed = true;
+          }
+        }
+        if (type === 'fr-task') {
+          // An impacted FR reaches the task(s) that implemented it → /sf:change reopens them.
+          if (impacted.fr.includes(from) && !impacted.tasks.includes(to)) {
+            addImpacted('tasks', to, `transitive fr-task from ${from}`);
             changed = true;
           }
         }

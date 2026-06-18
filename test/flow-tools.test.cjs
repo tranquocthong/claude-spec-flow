@@ -703,6 +703,39 @@ test('trace-impact: --ids FR-001 resolves transitively to linked TC', () => {
   assert.ok(r.data.impacted.tc.includes('TC-001'), 'TC-001 transitively impacted via FR-001 fr-tc link');
 });
 
+test('REGRESSION #3 trace-impact: a changed FR reaches the implementing task via fr-task link', () => {
+  // Pre-fix: no fr-task link type existed → an FR-id changeset resolved to tasks=[]
+  // and /sf:change could not auto-reopen the task. Fix: trace-link --fr --task seeds
+  // an fr→task link in file-links; trace-build emits fr-task; trace-impact walks it.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns JWT | Must Have | US-1 |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid creds login | JWT 200 | FR-001 |', '',
+  ].join('\n'));
+  // Implementation recorded task 7 against FR-001 (as /sf:phase does via trace-link --fr).
+  const tl = run(['trace-link', '--task', '7', '--feature', 'demo', '--fr', 'FR-001', '--files', 'src/Login.java'], dir);
+  assert.equal(tl.ok, true, 'trace-link --fr ok');
+  const tb = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(tb.ok, true);
+  // fr-task link must exist in the trace.
+  const trace = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'trace.json'), 'utf8'));
+  assert.ok(trace.links.some(l => l.type === 'fr-task' && l.from === 'FR-001' && l.to === '7'), 'fr-task link emitted');
+
+  const r = run(['trace-impact', '--feature', 'demo', '--ids', 'FR-001'], dir);
+  assert.equal(r.ok, true);
+  assert.ok(r.data.impacted.tasks.includes('7'), 'changed FR-001 reaches implementing task 7 (was [] pre-fix)');
+});
+
 test('state-update: writes STATE.md and returns state path, lines, nextStep', () => {
   const dir = tmpProject();
   initProject(dir);

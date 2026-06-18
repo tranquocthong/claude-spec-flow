@@ -30,7 +30,7 @@ You implement exactly ONE task. The SD section is the contract.
      --fr <FR-id-if-known> [--repo <service>] \
      --files "<comma-separated relative paths changed>"
    ```
-   Omit `--fr` if the task has no specific FR. All changed files in one call. (If `--feature` is omitted it falls back to the active feature in `trace.json`.) **Multi-repo:** pass `--repo <service>` (the repo you edited) and give `--files` relative to that repo's root — the path is stored qualified (`<service>/src/...`) so files from different services stay distinguishable.
+   **Pass `--fr <FR-id>`** — the task implements an FR row from the SD; this seeds the `fr→task` link so a later `/sf:change` on that FR auto-reopens this task (without it, the FR change resolves to no task and must be mapped by hand). Only omit `--fr` for a pure infra/chore task with no FR. All changed files in one call. (If `--feature` is omitted it falls back to the active feature in `trace.json`.) **Multi-repo:** pass `--repo <service>` (the repo you edited) and give `--files` relative to that repo's root — the path is stored qualified (`<service>/src/...`) so files from different services stay distinguishable.
 7. Log to the task via the **CLI** (this agent has no MCP access; the CLI reads `.taskmaster/config.json`
    fresh → keyless `claude-code`): `npx -y -p task-master-ai@0.43.1 task-master update-task --id=<id> --append --prompt="<actual field names, HTTP status codes, error codes, files changed>"`. Use `update-task --append`, NOT `update-subtask` — the latter needs a `parent.sub` id and fails for tasks that were not expanded into subtasks (the common solo/fast-path case).
 8. Return control to the orchestrator — do NOT run the full test suite or mark the task done.
