@@ -86,7 +86,7 @@ With a file path given, skip Mode 0 and go straight to the Steps.
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-build \
      --sd .spec-flow/specs/<feature>/SD.md --feature <feature>
    ```
-   Writes `.spec-flow/trace.json`: nodes (FR, TC, errors, states) + links (fr-tc, src-fr).
+   Writes `.spec-flow/trace.json`: nodes (FR, TC, errors, states) + links (fr-tc, src-fr, fr-task). **Check `data.warnings`** — if `conventions.errorCodePattern` is set and any §12.2 code violates it, the warning lists the offending codes; surface it and fix the SD codes to the project's standard before the gate.
 
 7. **Update state**
    ```

@@ -736,6 +736,37 @@ test('REGRESSION #3 trace-impact: a changed FR reaches the implementing task via
   assert.ok(r.data.impacted.tasks.includes('7'), 'changed FR-001 reaches implementing task 7 (was [] pre-fix)');
 });
 
+test('trace-build: warns on error codes violating conventions.errorCodePattern (enforcement)', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  // Declare the project's standard pattern: ERR_<ONE-TOKEN>_<NNN>.
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.conventions.errorCodePattern = '^ERR_[A-Z]+_\\d{3}$';
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | does X | Must Have | US-1 |', '',
+    '## 12.2 Domain Error Codes', '',
+    '| Error Code | HTTP | Trigger |',
+    '| --- | --- | --- |',
+    '| ERR_ORDER_001 | 422 | conforms |',
+    '| ERR_WEBHOOK_PGMS_LOOKUP_002 | 404 | stacked domain, violates |', '',
+  ].join('\n'));
+  const r = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  assert.ok(Array.isArray(r.data.warnings), 'warnings array present');
+  const w = r.data.warnings.join(' ');
+  assert.match(w, /errorCodePattern/, 'a pattern-violation warning is surfaced');
+  assert.match(w, /ERR_WEBHOOK_PGMS_LOOKUP_002/, 'the stacked code is flagged');
+  assert.ok(!/ERR_ORDER_001/.test(w), 'the conforming code is NOT flagged');
+});
+
 test('#4 status-report: surfaces declared live gaps from VERIFICATION.md', () => {
   // verified-adhoc ship with "not verified live" items must be VISIBLE in /sf:status,
   // not buried in prose. status-report extracts bullets under a gaps heading.

@@ -2,6 +2,13 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.3.16] — 2026-06-18
+
+Enforce the project's error-code pattern (deterministic, opt-in).
+
+- **New `conventions.errorCodePattern` (config DATA) + `trace-build` enforcement.** Set a regex (e.g. `"^ERR_[A-Z]+_\\d{3}$"`, `"^[a-z]+(\\.[a-z]+)+$"`, `"^[A-Z]+-\\d{4}$"`) and `trace-build` warns (in `data.warnings`) on every §12.2 error code that violates it — catching house-convention drift (like a stacked `ERR_WEBHOOK_PGMS_LOOKUP_002`) right at ingest/resync instead of by eye at review. Warn, not block (style issue, user decides). Unset (default `null`) → no enforcement. `/sf:ingest` surfaces the warning; `sd-author §C` is told to match the pattern when set.
+- +1 test (39 total). Engine 2894 → 2914 LOC.
+
 ## [0.3.15] — 2026-06-18
 
 Live-gap transparency, project-aware error codes, and a cost note on per-task logging.

@@ -712,6 +712,11 @@ const commands = {
           frPrefix: 'FR-',
           tcPrefix: 'TC-',
           errorCodePrefix: 'ERR_',
+          // Opt-in: a regex (string) the project's error codes must match. When set,
+          // trace-build warns on any §12.2 code that violates it (enforces the
+          // project's standard pattern). null = no enforcement. Examples:
+          //   "^ERR_[A-Z]+_[A-Z]+_\\d{3}$"  |  "^[a-z]+(\\.[a-z]+)+$"  |  "^[A-Z]+-\\d{4}$"
+          errorCodePattern: null,
         },
         verify: verifyPreset,
         branching: BRANCHING_DEFAULT,
@@ -1199,6 +1204,20 @@ const commands = {
       trigger: (r[2] || '').trim(),
     })).filter(n => n.code) : [];
 
+    // Enforce the project's standard error-code pattern (opt-in: config.conventions
+    // .errorCodePattern). WARN (not block) on §12.2 codes that don't match — surfaces
+    // a drift from the house convention right at ingest/resync, not at review-by-eye.
+    const warnings = [];
+    const ecPattern = ((readJsonSafe(PATHS.config, {}) || {}).conventions || {}).errorCodePattern || null;
+    if (ecPattern && errorNodes.length) {
+      let ecRe = null;
+      try { ecRe = new RegExp(ecPattern); } catch { warnings.push(`conventions.errorCodePattern is not a valid regex: ${ecPattern}`); }
+      if (ecRe) {
+        const bad = errorNodes.map(n => n.code.replace(/^`|`$/g, '')).filter(c => !ecRe.test(c));
+        if (bad.length) warnings.push(`${bad.length} error code(s) violate conventions.errorCodePattern (${ecPattern}): ${bad.join(', ')}`);
+      }
+    }
+
     // Build state nodes
     const stateNodes = stateTable ? stateTable.rows.map(r => ({
       name: (r[0] || '').trim(),
@@ -1368,6 +1387,7 @@ const commands = {
         files: fileNodes.length,
       },
       linkCount: links.length,
+      warnings,
     });
   },
 

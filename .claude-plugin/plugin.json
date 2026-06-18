@@ -1,6 +1,6 @@
 {
   "name": "sf",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "Spec-driven dev for Claude Code: a messy SRS (or just an idea) -> a reviewed Solution Design -> adaptive implementation that traces back to every line. Change-driven resync/change/bug loops, local-first manual-test verification, keyless via Task Master. No lock-in.",
   "author": {
     "name": "Travis Tran",
