@@ -20,6 +20,8 @@ The engine emits a **scaffold** — it cannot know endpoint paths or the right a
    - **read / transform** (e.g. masking, projection — no DB write): assert `expect.body` field(s) == the SD §13.2 Expected Result value. This IS a valid PASS; do NOT invent a `verify:` SQL block where nothing is persisted.
    - **mutation** (writes a row/event): delete the `body` stub and add a `verify:` SQL block asserting the real DB/Redis delta (SD §7.2 columns), per `test-rigor.md` MUST-2/3.
    - **pure unit transform** (a TC with no endpoint — e.g. a util `maskPhone("x")→"y"` case): this is a unit test owned by BUILD, not a manual test. Tag it `[no-verify]` or remove it from the checklist; do NOT fabricate a `/api/v1/...` endpoint for it.
-3. Run `scripts/lint-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml` (must pass: no TODO markers, every test has an assertion). Then present the filled checklist to the user for review before `/sf:phase`.
+   - **event-driven / cross-service** (no synchronous HTTP surface — e.g. outbox → CDC → publisher → callback): not curl-able as a request/expect. Tag it `[live-e2e]` (verified by a live run, surfaced as a VERIFICATION gap) rather than leaving a fake HTTP stub.
+3. Check progress any time: `node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs checklist-status --feature <feature>` — classifies each test `filled` / `scaffold` (still has TODO stubs) / `no-verify` / `live-e2e` and reports `ready` (no scaffold left). Use it instead of eyeballing the file.
+4. Run `scripts/lint-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml` (must pass: no TODO markers, every test has an assertion). Then present the filled checklist to the user for review before `/sf:phase`.
 
 > Deterministic scaffold (no subagent); the agent fills it from the SD.

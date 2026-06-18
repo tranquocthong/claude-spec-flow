@@ -1032,6 +1032,49 @@ const commands = {
   },
 
   // -----------------------------------------------------------------------
+  // checklist-status  [--feature <f>] [--file <path>]
+  // Classify each test in a CHECKLIST.yaml so you don't have to eyeball the file
+  // to know what's ready: filled / scaffold (still has the gen tripwires
+  // `path: /api/v1/TODO` or `_assert: TODO`) / no-verify / live-e2e (tagged).
+  // Returns ok({ total, counts, byStatus, ready }). Zero-dep line parse (no YAML lib).
+  // -----------------------------------------------------------------------
+  'checklist-status'(args) {
+    const feature = args.feature || (readJsonSafe(PATHS.trace, null) || {}).feature || null;
+    const file = args.file || (feature ? path.join(PATHS.specs, feature, 'CHECKLIST.yaml') : null);
+    if (!file) return err('MISSING_ARG: --feature <f> or --file <path>');
+    if (!fs.existsSync(file)) return err(`NOT_FOUND: ${file}`);
+    let raw; try { raw = fs.readFileSync(file, 'utf8'); } catch (e) { return err(`READ_FAILED: ${e.message}`); }
+    // Split into test blocks: each begins at `- id: <X>` where X is not a `suite-` id.
+    const tests = [];
+    let cur = null;
+    for (const ln of raw.split(/\r?\n/)) {
+      const m = ln.match(/^\s*-\s*id:\s*(\S+)/);
+      if (m) {
+        if (/^suite-/i.test(m[1])) { cur = null; continue; } // suite header, not a test
+        cur = { id: m[1], body: [] };
+        tests.push(cur);
+      } else if (cur) cur.body.push(ln);
+    }
+    const classify = (t) => {
+      const blob = t.id + '\n' + t.body.join('\n');
+      if (/\[no-verify\]/i.test(blob)) return 'no-verify';
+      if (/\[live-e2e\]/i.test(blob)) return 'live-e2e';
+      if (/\/api\/v1\/TODO|_assert:\s*TODO/.test(blob)) return 'scaffold';
+      return 'filled';
+    };
+    const byStatus = { filled: [], scaffold: [], 'no-verify': [], 'live-e2e': [] };
+    for (const t of tests) byStatus[classify(t)].push(t.id);
+    const counts = Object.fromEntries(Object.entries(byStatus).map(([k, v]) => [k, v.length]));
+    const ready = counts.scaffold === 0;
+    return ok({
+      feature, file, total: tests.length, counts, byStatus, ready,
+      note: ready
+        ? 'no scaffold stubs left — fillable tests are filled or explicitly tagged; ready to run/lint.'
+        : `${counts.scaffold} scaffold test(s) still have TODO stubs — fill from the SD, or tag [no-verify] / [live-e2e].`,
+    });
+  },
+
+  // -----------------------------------------------------------------------
   // trace-link  --task <taskId> [--fr <FR-id>] --files "p1,p2,..."
   //
   // Append/dedupe entries into .spec-flow/file-links.json.

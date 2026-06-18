@@ -736,6 +736,49 @@ test('REGRESSION #3 trace-impact: a changed FR reaches the implementing task via
   assert.ok(r.data.impacted.tasks.includes('7'), 'changed FR-001 reaches implementing task 7 (was [] pre-fix)');
 });
 
+test('checklist-status: classifies tests filled / scaffold / no-verify / live-e2e', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const cl = path.join(dir, '.spec-flow', 'specs', 'demo', 'CHECKLIST.yaml');
+  fs.mkdirSync(path.dirname(cl), { recursive: true });
+  fs.writeFileSync(cl, [
+    'config: {}',
+    'suites:',
+    '  - id: suite-1',
+    '    name: "Flow"',
+    '    tests:',
+    '      - id: TC-001',          // scaffold: still has the gen tripwires
+    '        name: "scaffolded"',
+    '        request:',
+    '          path: /api/v1/TODO',
+    '        expect:',
+    '          body:',
+    '            _assert: TODO',
+    '      - id: TC-002',          // filled: real path + assertion
+    '        name: "filled one"',
+    '        request:',
+    '          path: /api/v1/webhooks',
+    '        expect:',
+    '          status: 200',
+    '      - id: TC-003',          // no-verify (pure unit transform)
+    '        name: "mask util [no-verify]"',
+    '        request:',
+    '          path: /api/v1/TODO',
+    '      - id: TC-004',          // live-e2e (event-driven, not curl-able)
+    '        name: "webhook delivery [live-e2e]"',
+    '',
+  ].join('\n'));
+  const r = run(['checklist-status', '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.total, 4, '4 tests (suite-1 header not counted)');
+  assert.equal(r.data.counts.scaffold, 1, 'TC-001 is scaffold');
+  assert.equal(r.data.counts.filled, 1, 'TC-002 is filled');
+  assert.equal(r.data.counts['no-verify'], 1, 'TC-003 tagged no-verify (not counted scaffold despite TODO path)');
+  assert.equal(r.data.counts['live-e2e'], 1, 'TC-004 tagged live-e2e');
+  assert.equal(r.data.ready, false, 'not ready: one scaffold stub remains');
+  assert.deepEqual(r.data.byStatus.scaffold, ['TC-001']);
+});
+
 test('state-update: writes STATE.md and returns state path, lines, nextStep', () => {
   const dir = tmpProject();
   initProject(dir);
