@@ -878,12 +878,17 @@ const commands = {
     if (!src) return err('MISSING_ARG: --srs <path>');
     if (!fs.existsSync(src)) return err(`NOT_FOUND: ${src}`);
     ensureDir(PATHS.snapshots);
-    const feature = args.feature || slugify(((fs.readFileSync(src, 'utf8').match(/Feature:\s*([^\n#]+)/i) || [])[1] || path.basename(src, path.extname(src))));
+    const fromContent = (fs.readFileSync(src, 'utf8').match(/Feature:\s*([^\n#]+)/i) || [])[1];
+    const feature = args.feature || slugify(fromContent || path.basename(src, path.extname(src)));
+    const warnings = [];
+    if (!args.feature && !fromContent && /^\d{4}-\d{2}-\d{2}-/.test(feature)) {
+      warnings.push(`slug "${feature}" looks date-prefixed (derived from filename). Move SRS to .spec-flow/srs/<clean-name>.md or pass --feature <slug>.`);
+    }
     const existing = fs.readdirSync(PATHS.snapshots).filter(f => f.startsWith(feature + '-')).length;
     // Zero-pad version so files sort in order (login-002.md before login-010.md).
     const dest = path.join(PATHS.snapshots, `${feature}-${pad3(existing + 1)}.md`);
     try { fs.copyFileSync(src, dest); } catch (e) { return err(`COPY_FAILED: ${e.message}`); }
-    return ok({ feature, snapshot: dest, version: existing + 1 });
+    return ok({ feature, snapshot: dest, version: existing + 1, warnings });
   },
 
   'sd-skeleton'(args) {
@@ -1633,7 +1638,7 @@ const commands = {
       nextStep = 'No SD — run `/sf:ingest <srs>`.';
     } else {
       let sdTodos = 0;
-      try { sdTodos = (fs.readFileSync(sdPath, 'utf8').match(/TODO:MANUAL-REVIEW/g) || []).length; } catch {}
+      try { sdTodos = (fs.readFileSync(sdPath, 'utf8').match(/^>\s*\*\*TODO:MANUAL-REVIEW\*\*/gm) || []).length; } catch {}
       if (sdTodos > 0) {
         nextStep = `SD has ${sdTodos} \`TODO:MANUAL-REVIEW\` — clear + approve, then \`/sf:checklist ${featureName}\` (no \`parse_prd\` until 0).`;
       } else if (!fs.existsSync(checklistPath)) {
@@ -2142,7 +2147,7 @@ const commands = {
       } else {
         let sdContent = '';
         try { sdContent = fs.readFileSync(sdPath, 'utf8'); } catch {}
-        const todoCount = (sdContent.match(/TODO:MANUAL-REVIEW/g) || []).length;
+        const todoCount = (sdContent.match(/^>\s*\*\*TODO:MANUAL-REVIEW\*\*/gm) || []).length;
         if (todoCount > 0) {
           push('sd-gate', 'warn', `SD has ${todoCount} TODO:MANUAL-REVIEW marker(s) — not ready for parse_prd`, 'review SD before running parse_prd (Task Master)');
         } else {
@@ -2615,7 +2620,7 @@ const commands = {
     let sdExists = false;
     if (sdPath && fs.existsSync(sdPath)) {
       sdExists = true;
-      try { sdTodos = (fs.readFileSync(sdPath, 'utf8').match(/TODO:MANUAL-REVIEW/g) || []).length; } catch {}
+      try { sdTodos = (fs.readFileSync(sdPath, 'utf8').match(/^>\s*\*\*TODO:MANUAL-REVIEW\*\*/gm) || []).length; } catch {}
     }
 
     // Trace counts

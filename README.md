@@ -9,7 +9,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
  └─────────────────────  /sf:change  (you change your mind) ───────────
 ```
 
-> v0.3.8 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
+> v0.3.9 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
 
 ## What you get
 
