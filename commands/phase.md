@@ -117,6 +117,15 @@ Returns per-FR complexity scores (1–10):
      --feature <feature> --note "task #<id> done"
    ```
 
+6b. **Semantic drift-check (advisory, before next_task)**
+   ```
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs drift-check --feature <feature>
+   ```
+   Layer-2 SD-mismatch defense: diffs the **actual** error codes in your `update-task` logs (step 3) against the SD §12.2 codes (via trace). Parse `data.drift`:
+   - `spec-not-evidenced` → an SD §12.2 code with no mention in any task log: confirm it's implemented, or that you logged the actual code (step 3 must record real error codes). Don't silently leave a spec'd error unbuilt.
+   - `impl-not-specced` → a code in the logs the SD doesn't document: **update SD §12.2** (or fix the code to the spec'd one) — the SD is the source of truth.
+   Advisory, never blocks. `clean: true` (or a "no logs yet" note) → nothing to surface. This is why step 3 logging the **real** error codes matters — it's the signal drift-check reads.
+
 7. **Repeat** until no pending tasks remain.
 
 > Tip: `flow-tools wave-plan` lists the tasks whose dependencies are all done (the workable set). The

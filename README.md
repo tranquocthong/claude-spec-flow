@@ -9,7 +9,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
  └─────────────────────  /sf:change  (you change your mind) ───────────
 ```
 
-> v0.4.1 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
+> v0.5.0 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
 
 ## What you get
 
@@ -292,6 +292,7 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `trace-link --task <id> --feature <f> [--fr <FR-id>] --files "p1,p2,..."` | record task→file (and FR→file / FR→task when `--fr` given) links into `.spec-flow/specs/<feature>/file-links.json` (per-feature; falls back to the active feature if `--feature` omitted); deduplicated, persistent across `trace-build` rebuilds |
 | `trace-build --sd [--feature] [--tasks]` | build the feature's trace; merges `file-links.json` → adds `nodes.files` + `task-file`/`fr-file`/**`fr-task`** links. Writes a **durable per-feature copy** at `specs/<feature>/trace.json` + an active-feature mirror at `.spec-flow/trace.json`. Warns on §12.2 codes that violate `conventions.errorCodePattern` |
 | `trace-impact --ids/--keywords/--changeset [--feature]` | resolve impacted FR/TC/error nodes + **tasks** (via `fr-task`) + `impacted.files` — so `/sf:change` auto-reopens the task that implemented a changed FR |
+| `drift-check --feature [--tasks]` | **Layer-2 semantic SD-mismatch check**: diffs the actual error codes in the executor's `update-task` logs vs SD §12.2 → flags `spec-not-evidenced` (spec'd, no log evidence) and `impl-not-specced` (built but undocumented). Advisory; `/sf:phase` runs it before next_task |
 | `srs-diff --new [--old]` | best-effort CHANGESET between two SRS versions |
 | `verify-collect --results` | parse run-checklist output → VERIFICATION truths[] |
 | `state-update --feature [--note]` | refresh `.spec-flow/STATE.md` (<100 lines) — incl. a deterministic Next Step |
@@ -365,7 +366,7 @@ spec-flow is branch-aware and **VCS-agnostic** (GitHub + GitLab). The policy liv
 <details><summary><b>Non-negotiable gates</b></summary>
 
 1. **`/sf:ingest` never implements** — ingest (incl. interview mode) outputs only the SRS + SD + trace, then STOPS at the SD review gate. Discussing a feature is not permission to code it; implementation is `/sf:phase`, after the SD is approved.
-2. **No `parse_prd`** while the SD has any `TODO:MANUAL-REVIEW` marker (SD-mismatch defense, layer 1).
+2. **No `parse_prd`** while the SD has any `TODO:MANUAL-REVIEW` marker (SD-mismatch defense, layer 1). Layer 2 = `drift-check` (semantic: logged error codes vs SD §12.2) + the `sd-drift-detect` hook (structural: file-in-trace) — advisory, surfaced during `/sf:phase`.
 3. **CHECKLIST.yaml exists** before the first task is implemented.
 4. **`verify-code` gate** runs before every manual-test smoke run (generic config-driven: tests, coverage, forbidden patterns, secret scan; stack specifics live in `.spec-flow/config.json → verify`; unconfigured → skips without blocking).
 5. **`review → done`** only after manual-test smoke passes; a phase ships only when regression passes (`VERIFICATION.md status: passed`).
@@ -386,6 +387,7 @@ hooks/            checklist-to-verification (PostToolUse) · sd-drift-detect (Pr
 bin/flow-tools.cjs  thin CLI entry + workflow commands (trace/verify/checklist/state/bug/epic/branch/status)
 lib/core.cjs        shared infra + SRS/SD parsers + genSd (no command logic)
 lib/maintenance.cjs static, non-workflow commands: init · init-project · learn · doctor
+lib/drift.cjs       Layer-2 semantic drift-check (drift-check command)
 templates/        sd-template.md · srs-template.md · lang/{en,vi}.json (SRS-parse keyword packs)
 test/             *.test.cjs — flow-tools (CLI) · core · maintenance unit suites (`node --test test/*.test.cjs`)
 .mcp.json         wires Task Master via npx

@@ -21,12 +21,15 @@ const {
   STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, TODO, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
 } = require('../lib/core.cjs');
 const maintenance = require('../lib/maintenance.cjs');
+const drift = require('../lib/drift.cjs');
 
 // =====================================================================
-//  COMMANDS (workflow). Static commands live in lib/maintenance.cjs.
+//  COMMANDS (workflow). Static commands live in lib/maintenance.cjs;
+//  the semantic drift-check lives in lib/drift.cjs.
 // =====================================================================
 const commands = {
   ...maintenance,
+  ...drift,
   'srs-snapshot'(args) {
     const src = args.srs;
     if (!src) return err('MISSING_ARG: --srs <path>');

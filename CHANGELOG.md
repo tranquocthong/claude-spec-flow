@@ -2,6 +2,17 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.0] — 2026-06-18
+
+G1 — Layer-2 semantic drift-check (closes the #1 design debt: the advertised "early SD-mismatch detection" that didn't really exist).
+
+- **New `drift-check --feature [--tasks]`** (in new module `lib/drift.cjs`). The structural `sd-drift-detect` hook only checked file-in-trace; this is the SEMANTIC layer: it diffs the **actual** error codes the executor logged via `update-task --append` (in `tasks.json` task/subtask details) against the SD §12.2 codes (via the trace), and flags:
+  - `spec-not-evidenced` — an SD §12.2 error code with no mention in any task log (spec'd, no evidence it was built / logged).
+  - `impl-not-specced` — an error-code token in the logs that the SD §12.2 doesn't document (built but undocumented → update the SD).
+- **Scope (v1): error codes** — the high-signal, deterministically-extractable contract element (honors the configured `errorCodePrefix` / `errorCodePattern`). §9.2 field-name and §10.4 state drift are intentionally deferred (their "actual" form in free-prose logs is too noisy to diff without false positives). Honest framing: absence in logs = "no evidence", not "definitely unimplemented". Advisory, never blocks; returns `clean: true` (or a "no logs yet" note) when there's nothing to flag.
+- `/sf:phase` runs it before next_task (new step 6b) and surfaces `data.drift`. README + the "non-negotiable gates" layer-2 note updated.
+- +4 tests in new `test/drift.test.cjs` (71 total). New `lib/drift.cjs` (95 LOC).
+
 ## [0.4.1] — 2026-06-18
 
 Ingest→checklist→phase UX fixes from real session friction, plus per-lib unit tests.
