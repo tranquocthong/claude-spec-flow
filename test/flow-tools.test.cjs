@@ -561,3 +561,136 @@ test('lang pack: a project-local language file extends parsing with no engine ch
   assert.equal(r.ok, true);
   assert.equal(r.data.stats.nfr, 1, 'custom xx.json keyword classifies the NFR heading — no engine edit');
 });
+
+// ---------------------------------------------------------------------------
+// New coverage: 6 previously-untested engine commands
+// ---------------------------------------------------------------------------
+
+test('init: returns paths, config, and traceExists flag', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const r = run(['init'], dir);
+  assert.equal(r.ok, true, 'init ok');
+  // paths object must expose known keys
+  assert.ok(r.data.paths && typeof r.data.paths.stateDir === 'string', 'paths.stateDir present');
+  assert.ok(r.data.paths.config, 'paths.config present');
+  // config is the live config.json
+  assert.ok(r.data.config && typeof r.data.config === 'object', 'config is an object');
+  // traceExists is a boolean
+  assert.equal(typeof r.data.traceExists, 'boolean', 'traceExists is boolean');
+  // after init-project only (no trace-build), trace should not exist yet
+  assert.equal(r.data.traceExists, false, 'traceExists false before any trace-build');
+});
+
+test('learn: appends a rule entry to project-author.md', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const r = run(['learn', '--note', 'always use snake_case for DB columns', '--category', 'pitfall'], dir);
+  assert.equal(r.ok, true, 'learn ok');
+  assert.match(r.data.appended, /always use snake_case for DB columns/, 'appended field echoes the note');
+  assert.ok(r.data.file, 'file path returned');
+  // Verify the rule actually landed in project-author.md
+  const content = fs.readFileSync(path.join(dir, r.data.file), 'utf8');
+  assert.match(content, /always use snake_case for DB columns/, 'rule appears in project-author.md');
+});
+
+test('checklist-gen: SD §13.2 TC table → CHECKLIST.yaml scaffold with suites and TODO markers', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns JWT | Must Have | US-1 |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid creds login | JWT returned 200 | FR-001 |',
+    '| TC-002 | Error | Invalid password | 401 Unauthorized | FR-001 |', '',
+  ].join('\n'));
+  const r = run(['checklist-gen', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'checklist-gen ok');
+  assert.equal(r.data.feature, 'demo', 'feature echoed');
+  assert.equal(r.data.tests, 2, 'two TC rows → two tests');
+  assert.ok(r.data.suites >= 1, 'at least one suite');
+  assert.ok(r.data.todo > 0, 'TODO markers present (checklist not filled)');
+  // CHECKLIST.yaml must have been written
+  const checklistPath = path.join(dir, '.spec-flow', 'specs', 'demo', 'CHECKLIST.yaml');
+  assert.ok(fs.existsSync(checklistPath), 'CHECKLIST.yaml written to specs/<feature>/');
+  const yaml = fs.readFileSync(checklistPath, 'utf8');
+  assert.match(yaml, /TC-001/, 'TC-001 appears in scaffold');
+  assert.match(yaml, /TC-002/, 'TC-002 appears in scaffold');
+});
+
+test('trace-impact: --ids FR-001 resolves transitively to linked TC', () => {
+  // Build a trace first, then call trace-impact and assert the impacted set.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns JWT | Must Have | US-1 |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid creds login | JWT 200 | FR-001 |', '',
+  ].join('\n'));
+  const tb = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(tb.ok, true, 'trace-build ok before trace-impact');
+
+  const r = run(['trace-impact', '--feature', 'demo', '--ids', 'FR-001'], dir);
+  assert.equal(r.ok, true, 'trace-impact ok');
+  assert.ok(r.data.impacted.fr.includes('FR-001'), 'FR-001 in impacted.fr');
+  // Transitive: FR-001 links to TC-001 via fr-tc link
+  assert.ok(r.data.impacted.tc.includes('TC-001'), 'TC-001 transitively impacted via FR-001 fr-tc link');
+});
+
+test('state-update: writes STATE.md and returns state path, lines, nextStep', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const r = run(['state-update', '--feature', 'demo', '--note', 'initial state capture'], dir);
+  assert.equal(r.ok, true, 'state-update ok');
+  assert.ok(r.data.state, 'state file path returned');
+  assert.ok(typeof r.data.lines === 'number' && r.data.lines > 0, 'lines is a positive number');
+  assert.ok(typeof r.data.nextStep === 'string' && r.data.nextStep.length > 0, 'nextStep is a non-empty string');
+  // STATE.md must be written on disk
+  const statePath = path.join(dir, '.spec-flow', 'STATE.md');
+  assert.ok(fs.existsSync(statePath), 'STATE.md exists on disk');
+  const content = fs.readFileSync(statePath, 'utf8');
+  assert.match(content, /STATE — demo/, 'STATE.md has the feature name heading');
+  assert.match(content, /initial state capture/, 'note appears in STATE.md');
+});
+
+test('wave-plan: returns ready set from tasks.json respecting dependencies', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const tmDir = path.join(dir, '.taskmaster', 'tasks');
+  fs.mkdirSync(tmDir, { recursive: true });
+  // task 1 done, task 2 depends on 1 (ready), task 3 depends on 2 (blocked), task 4 no deps (ready)
+  fs.writeFileSync(path.join(tmDir, 'tasks.json'), JSON.stringify({
+    tasks: [
+      { id: 1, title: 'setup db', status: 'done', dependencies: [] },
+      { id: 2, title: 'create tables', status: 'pending', dependencies: [1] },
+      { id: 3, title: 'seed data', status: 'pending', dependencies: [2] },
+      { id: 4, title: 'write tests', status: 'pending', dependencies: [] },
+    ],
+  }));
+  const r = run(['wave-plan'], dir);
+  assert.equal(r.ok, true, 'wave-plan ok');
+  assert.equal(r.data.doneCount, 1, '1 done task');
+  assert.equal(r.data.total, 4, 'total = 4 tasks');
+  // tasks 2 and 4 are ready (deps satisfied); task 3 is blocked
+  assert.equal(r.data.readyTotal, 2, 'tasks 2 and 4 are ready (deps met)');
+  assert.equal(r.data.blockedCount, 1, 'task 3 is blocked (dep 2 not done)');
+  const readyIds = r.data.ready.map((t) => t.id);
+  assert.ok(readyIds.includes(2), 'task 2 in ready set');
+  assert.ok(readyIds.includes(4), 'task 4 in ready set');
+  assert.ok(!readyIds.includes(3), 'task 3 not in ready set (blocked)');
+});

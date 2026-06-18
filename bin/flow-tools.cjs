@@ -22,7 +22,6 @@ const path = require('path');
 const STATE_DIR = '.spec-flow';
 const PATHS = {
   stateDir: STATE_DIR,
-  srs: path.join(STATE_DIR, 'srs'),
   snapshots: path.join(STATE_DIR, 'snapshots'),
   specs: path.join(STATE_DIR, 'specs'),
   trace: path.join(STATE_DIR, 'trace.json'),
@@ -30,7 +29,6 @@ const PATHS = {
   bugs: path.join(STATE_DIR, 'bugs'),
   config: path.join(STATE_DIR, 'config.json'),
   projectAuthor: path.join(STATE_DIR, 'project-author.md'),
-  gitignore: path.join(STATE_DIR, '.gitignore'),
 };
 
 // Plugin root (for resolveTemplate fallback)
@@ -224,12 +222,10 @@ function parseUserStories(md) {
     const name = (m[2] || '').replace(/\**/g, '').trim() || `US-${m[1]}`;
     const us = langPack().userStory || {};
     const role = (block.match(new RegExp(`(?:${(us.role || ['As an?']).join('|')})\\s+([^,\\n…]+?)\\s*,`, 'i')) || [])[1];
-    const want = (block.match(new RegExp(`(?:${(us.want || ['I want']).join('|')})\\s*[,:]?\\s*([^\\n…]+)`, 'i')) || [])[1];
-    const soThat = (block.match(new RegExp(`(?:${(us.soThat || ['so that']).join('|')})\\s*[,:]?\\s*([^\\n…]+)`, 'i')) || [])[1];
     const edgeRe = kwRe(us.edgeStart || ['edge case']);
     const acceptance = extractBulletsAfter(block, kwRe(us.acceptanceStart || ['acceptance']), edgeRe);
     const edges = extractBulletsAfter(block, edgeRe, null);
-    stories.push({ id: `US-${m[1]}`, name, role: trimOrNull(role), want: trimOrNull(want), soThat: trimOrNull(soThat), acceptance, edges });
+    stories.push({ id: `US-${m[1]}`, name, role: trimOrNull(role), acceptance, edges });
   }
   return stories;
 }
