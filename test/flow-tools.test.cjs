@@ -238,6 +238,82 @@ test('REGRESSION trace-build: src-fr links from embedded source refs ("SRS §5.1
   assert.equal(fr002src.from, 'US-5', 'clean US-N id preserved');
 });
 
+test('REGRESSION P1 trace clobber: per-feature trace is durable; build B never destroys A', () => {
+  // Pre-fix bug: a single global .spec-flow/trace.json — trace-build --feature B
+  // overwrote feature A's trace (the 103→21 link data-loss). Fix: durable copy at
+  // specs/<feature>/trace.json; global is just an active-feature mirror.
+  const dir = tmpProject();
+  initProject(dir);
+  const mkSd = (feat, frRows) => {
+    const sdDir = path.join(dir, '.spec-flow', 'specs', feat);
+    fs.mkdirSync(sdDir, { recursive: true });
+    fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+      `# SD: ${feat}`, '',
+      '## 5.1 Functional Requirements', '',
+      '| FR ID | Requirement | Priority | Source |',
+      '| --- | --- | --- | --- |',
+      ...frRows,
+      '',
+      '## 13.2 Test Cases', '',
+      '| TC ID | Flow | Test Case | Expected Result | FR |',
+      '| --- | --- | --- | --- | --- |',
+      '| TC-001 | F | t | ok | FR-001 |',
+      '',
+    ].join('\n'));
+    return path.join(sdDir, 'SD.md');
+  };
+  const sdA = mkSd('feat-a', ['| FR-001 | A only | Must Have | US-1 |']);
+  const sdB = mkSd('feat-b', ['| FR-001 | B one | Must Have | US-1 |', '| FR-002 | B two | Must Have | US-2 |']);
+
+  const ra = run(['trace-build', '--sd', sdA, '--feature', 'feat-a'], dir);
+  assert.equal(ra.ok, true);
+  assert.match(ra.data.perFeatureTrace, /specs[/\\]feat-a[/\\]trace\.json$/, 'durable per-feature path returned');
+  assert.equal(ra.data.switchedFrom, null, 'first build: no prior active feature');
+
+  const rb = run(['trace-build', '--sd', sdB, '--feature', 'feat-b'], dir);
+  assert.equal(rb.ok, true);
+  assert.equal(rb.data.switchedFrom, 'feat-a', 'building feat-b reports the active switch from feat-a');
+
+  // feat-a's durable trace must STILL be intact after building feat-b.
+  const aTrace = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'feat-a', 'trace.json'), 'utf8'));
+  assert.equal(aTrace.feature, 'feat-a', 'feat-a durable trace not clobbered');
+  assert.equal(aTrace.nodes.fr.length, 1, 'feat-a still has its 1 FR');
+
+  // Global mirror now reflects feat-b (last built).
+  const globalTrace = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'trace.json'), 'utf8'));
+  assert.equal(globalTrace.feature, 'feat-b', 'global mirror = last-built feature');
+
+  // status-report --feature feat-a reads feat-a's durable trace, not the global mirror.
+  const sa = run(['status-report', '--feature', 'feat-a'], dir);
+  assert.equal(sa.ok, true);
+  assert.equal(sa.data.feature, 'feat-a');
+  assert.equal(sa.data.trace.fr, 1, 'status reads feat-a durable trace (1 FR), not feat-b mirror (2 FR)');
+});
+
+test('REGRESSION P1 resync guard: srs-diff flags an empty changeset (wrong-input signal)', () => {
+  // Pre-fix: srs-diff against the latest snapshot of an unrelated doc returned 0/0/0
+  // and resync silently ran the whole pipeline as a no-op. Now emptyChangeset + hint.
+  const dir = tmpProject();
+  initProject(dir);
+  const srs = path.join(dir, '.spec-flow', 'srs', 'demo.md');
+  fs.mkdirSync(path.dirname(srs), { recursive: true });
+  fs.writeFileSync(srs, '# Feature: Demo\n\n## 5. Business Logic\n\n| Business Logic | Note |\n| --- | --- |\n| BL-01 must do X | |\n');
+  const snap = run(['srs-snapshot', '--srs', srs, '--feature', 'demo'], dir);
+  assert.equal(snap.ok, true);
+
+  // Diff the SAME content vs its snapshot → no changes.
+  const same = run(['srs-diff', '--new', srs, '--feature', 'demo'], dir);
+  assert.equal(same.ok, true);
+  assert.equal(same.data.emptyChangeset, true, '0/0/0 diff flagged as empty');
+  assert.match(same.data.hint, /ingest|change/i, 'hint routes to /sf:ingest or /sf:change');
+
+  // A real edit → not flagged.
+  fs.writeFileSync(srs, '# Feature: Demo\n\n## 5. Business Logic\n\n| Business Logic | Note |\n| --- | --- |\n| BL-01 must do X | |\n| BL-02 also do Y | |\n');
+  const changed = run(['srs-diff', '--new', srs, '--feature', 'demo'], dir);
+  assert.equal(changed.ok, true);
+  assert.equal(changed.data.emptyChangeset, false, 'a real BL addition is not an empty changeset');
+});
+
 test('REGRESSION branch-ensure: git repo with no commits → NO_COMMITS (not NOT_A_GIT_REPO)', () => {
   const dir = tmpProject();
   execFileSync('git', ['init', '-q'], { cwd: dir });

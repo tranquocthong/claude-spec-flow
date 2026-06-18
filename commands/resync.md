@@ -22,6 +22,8 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
    ```
    Auto-resolves the latest snapshot (or `--old <snapshot.md>` for a specific version). Outputs CHANGESET `{ added, changed, removed }` keyed by SRS anchors (US, AC, NFR, BL, state). Treat as a hint for sd-author; SD remains the authoritative artifact.
 
+   **Guard — empty changeset (`emptyChangeset: true`, all counts 0):** STOP. A 0/0/0 diff vs the latest snapshot means this doc is almost certainly **not a revision** of the tracked SRS. Surface `data.hint` and ask the user: is this a **new/different feature** (→ `/sf:ingest`) or a **spec tweak** (→ `/sf:change`)? Do **not** run steps 2-8 (the whole pipeline would be a silent no-op against the wrong input). Only proceed if the user confirms they genuinely expected an empty delta (e.g. re-running after a partial resync).
+
 2. **Resolve impact**
    Write the changeset JSON to a temp file, then:
    ```

@@ -54,6 +54,15 @@ function parseArgs(argv) {
   return out;
 }
 function readJsonSafe(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
+// Trace storage: the DURABLE source of truth is per-feature at specs/<feature>/trace.json
+// (keyed by the feature dir → building feature B can never clobber feature A's trace).
+// The global .spec-flow/trace.json is an "active feature" MIRROR, rewritten on each
+// trace-build to reflect the last-built feature (so bare `/sf:status` knows what's active).
+function traceFileFor(feature) { return feature ? path.join(PATHS.specs, feature, 'trace.json') : PATHS.trace; }
+function readTrace(feature) {
+  if (feature) { const pf = path.join(PATHS.specs, feature, 'trace.json'); if (fs.existsSync(pf)) return readJsonSafe(pf, null); }
+  return readJsonSafe(PATHS.trace, null);
+}
 function ensureDir(p) { try { fs.mkdirSync(p, { recursive: true }); } catch {} }
 function slugify(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'feature'; }
 // Read Task Master tasks from a parsed tasks.json — handles flat ({tasks:[]}), a
@@ -1284,12 +1293,24 @@ const commands = {
       links,
     };
 
-    try { fs.writeFileSync(PATHS.trace, JSON.stringify(trace, null, 2)); } catch (e) {
+    const traceJson = JSON.stringify(trace, null, 2);
+    const perFeaturePath = traceFileFor(feature);
+    // Detect an active-feature switch BEFORE overwriting the mirror — purely for
+    // transparency in the result; the prior feature's durable trace is never touched.
+    const prevGlobal = readJsonSafe(PATHS.trace, null);
+    const switchedFrom = (prevGlobal && prevGlobal.feature && prevGlobal.feature !== feature) ? prevGlobal.feature : null;
+    try {
+      ensureDir(path.join(PATHS.specs, feature));
+      fs.writeFileSync(perFeaturePath, traceJson); // durable per-feature source of truth
+      fs.writeFileSync(PATHS.trace, traceJson);    // active-feature mirror
+    } catch (e) {
       return err(`WRITE_FAILED: ${e.message}`);
     }
 
     return ok({
       trace: PATHS.trace,
+      perFeatureTrace: perFeaturePath,
+      switchedFrom,
       counts: {
         fr: frNodes.length,
         tc: tcNodes.length,
@@ -1309,7 +1330,7 @@ const commands = {
   // Also walks task-file and fr-file links to populate impacted.files.
   // -----------------------------------------------------------------------
   'trace-impact'(args) {
-    const trace = readJsonSafe(PATHS.trace, null);
+    const trace = readTrace(args.feature);
     if (!trace) return err('NO_TRACE: run trace-build first');
 
     const reasons = [];
@@ -1508,7 +1529,18 @@ const commands = {
 
     const changeset = { added, changed, removed };
     const counts = { added: added.length, changed: changed.length, removed: removed.length };
-    return ok({ changeset, counts, note: 'best-effort: SRS is free-form; treat as hint for sd-author. The SD is the authoritative controlled artifact.' });
+    // 0/0/0 against the latest snapshot is a strong signal the input is NOT a revision
+    // of the tracked SRS (wrong doc / a new feature). resync.md gates on this rather
+    // than silently running the whole pipeline as a no-op.
+    const empty = counts.added + counts.changed + counts.removed === 0;
+    return ok({
+      changeset, counts,
+      emptyChangeset: empty,
+      hint: empty
+        ? `0 changes vs snapshot "${path.basename(oldPath)}" — this doc may not be a revision of the tracked feature. If it's a new/different feature use /sf:ingest; for a spec tweak use /sf:change. Only continue resync if you expected an empty delta.`
+        : null,
+      note: 'best-effort: SRS is free-form; treat as hint for sd-author. The SD is the authoritative controlled artifact.',
+    });
   },
 
   // -----------------------------------------------------------------------
@@ -1562,8 +1594,9 @@ const commands = {
     const note = args.note || null;
     const now = new Date().toISOString();
 
-    // Try to read trace for task counts and feature name
-    const trace = readJsonSafe(PATHS.trace, null);
+    // Try to read trace for task counts and feature name (per-feature durable copy
+    // when --feature is given, else the active-feature mirror).
+    const trace = readTrace(feature);
     const traceTasks = (trace && trace.nodes && trace.nodes.tasks) || [];
     const featureName = feature || (trace && trace.feature) || 'unknown';
 
@@ -2602,9 +2635,9 @@ const commands = {
     let branch = null;
     try { branch = execSync('git branch --show-current', { stdio: 'pipe', timeout: 3000 }).toString().trim(); } catch {}
 
-    // Feature — from arg or trace
-    const trace = readJsonSafe(PATHS.trace, null);
-    let featureName = args.feature || (trace && trace.feature) || null;
+    // Feature — from arg, else the active-feature mirror's hint.
+    const globalTrace = readJsonSafe(PATHS.trace, null);
+    let featureName = args.feature || (globalTrace && globalTrace.feature) || null;
     // Fallback: an SD on disk with no trace.json yet (ingest interrupted before
     // trace-build) — detect the feature from specs/ so /sf:status can still resume it.
     if (!featureName && fs.existsSync(PATHS.specs)) {
@@ -2613,6 +2646,9 @@ const commands = {
         if (sdDirs.length) featureName = sdDirs[sdDirs.length - 1];
       } catch {}
     }
+    // Read THE FEATURE's durable trace — the global mirror may reflect a different
+    // last-built feature, so resolve per-feature once featureName is known.
+    const trace = readTrace(featureName) || globalTrace;
 
     // SD info
     const sdPath = featureName ? path.join(PATHS.specs, featureName, 'SD.md') : null;
