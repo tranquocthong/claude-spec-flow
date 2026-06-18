@@ -2339,6 +2339,36 @@ const commands = {
     // one root at cwd (backward compat). Check names are repo-prefixed in multi mode.
     const roots = resolveRepos(cfg);
 
+    // Scope (multi-repo): a change usually touches only SOME of config.repos, but the
+    // gate is worst-wins across all of them — so an unrelated repo's red WIP poisons a
+    // clean feature's gate. Narrow to the repos the feature actually wrote to:
+    //   --repos "a,b"  → explicit filter, OR
+    //   --feature X    → auto from X's file-links.json repo prefixes (trace-link --repo).
+    // No filter, single-repo (name null), or no match → scan all (full backward compat).
+    let scopedRoots = roots;
+    let scopeNote = null;
+    const explicitRepos = (typeof args.repos === 'string' && args.repos.trim())
+      ? new Set(args.repos.split(',').map(s => s.trim()).filter(Boolean)) : null;
+    let touchedRepos = null;
+    const vcFeature = args.feature || (readJsonSafe(PATHS.trace, null) || {}).feature || null;
+    if (!explicitRepos && vcFeature) {
+      const flPath = fileLinksPathFor(vcFeature);
+      if (fs.existsSync(flPath)) {
+        const names = new Set(roots.map(r => r.name).filter(Boolean));
+        const seen = new Set(((readJsonSafe(flPath, { links: [] }).links) || [])
+          .map(l => String(l.file || '').split('/')[0]).filter(seg => names.has(seg)));
+        if (seen.size) touchedRepos = seen;
+      }
+    }
+    const repoFilter = explicitRepos || touchedRepos;
+    if (repoFilter) {
+      const narrowed = roots.filter(r => !r.name || repoFilter.has(r.name));
+      if (narrowed.length) {
+        scopedRoots = narrowed;
+        scopeNote = `scoped to [${[...repoFilter].join(', ')}] via ${explicitRepos ? '--repos' : `feature ${vcFeature}`}`;
+      }
+    }
+
     // Build the check list for ONE repo root. `rootDir` scopes both the test/
     // coverage commands' cwd and the forbidden/secret filesystem scans.
     const runChecksInRoot = (rootDir) => {
@@ -2562,7 +2592,7 @@ const commands = {
     // Aggregate across all code roots. In multi-repo mode prefix each check name
     // with its repo so a failing check is traceable to the right service.
     const checks = [];
-    for (const rp of roots) {
+    for (const rp of scopedRoots) {
       const got = runChecksInRoot(rp.root);
       if (rp.name) got.forEach((c) => { c.name = `[${rp.name}] ${c.name}`; c.repo = rp.name; });
       checks.push(...got);
@@ -2577,7 +2607,7 @@ const commands = {
     const ran = summary.ok + summary.warn + summary.fail;
     const gate = summary.fail > 0 ? 'fail' : (ran === 0 ? 'skipped' : 'pass');
 
-    return ok({ checks, summary, gate, repos: roots.map((r) => r.name).filter(Boolean) });
+    return ok({ checks, summary, gate, repos: scopedRoots.map((r) => r.name).filter(Boolean), scope: scopeNote });
   },
 
   // -----------------------------------------------------------------------

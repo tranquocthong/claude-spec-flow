@@ -408,6 +408,57 @@ test('multi-repo verify-code: scans each code repo, prefixes checks, gate is wor
   assert.equal(bFp && bFp.status, 'ok', 'svc-b forbidden-patterns ok');
 });
 
+test('verify-code: --repos scopes the scan so an unrelated repo cannot poison the gate', () => {
+  // svc-a has a .block() (would FAIL); the change only touched svc-b (clean).
+  // Without scoping the aggregate gate fails on svc-a; --repos svc-b must isolate it.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-scope-'));
+  const hub = path.join(root, 'hub');
+  fs.mkdirSync(path.join(root, 'svc-a', 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'svc-b', 'src'), { recursive: true });
+  fs.mkdirSync(hub, { recursive: true });
+  fs.writeFileSync(path.join(root, 'svc-a', 'src', 'A.java'), 'class A { void f(){ x.block(); } }\n');
+  fs.writeFileSync(path.join(root, 'svc-b', 'src', 'B.java'), 'class B { void g(){ ok(); } }\n');
+  run(['init-project', '--stack', 'java-spring', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
+  // Make .block() the ONLY failure signal — drop the test/coverage commands (no real
+  // build tool in a temp dir, which would fail everywhere and mask the scoping effect).
+  const cfgPath = path.join(hub, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = null; cfg.verify.coverageCommand = null; cfg.verify.coverageThreshold = null;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  // Unscoped: svc-a's .block() fails the aggregate gate (baseline).
+  const all = run(['verify-code'], hub);
+  assert.equal(all.data.gate, 'fail', 'baseline: unrelated svc-a poisons the gate');
+
+  // Scoped to svc-b only → svc-a not scanned → gate passes.
+  const scoped = run(['verify-code', '--repos', 'svc-b'], hub);
+  assert.equal(scoped.data.gate, 'pass', 'scoping to svc-b isolates the clean repo');
+  assert.deepEqual(scoped.data.repos, ['svc-b'], 'only svc-b scanned');
+  assert.ok(!scoped.data.checks.some((c) => c.repo === 'svc-a'), 'no svc-a checks present');
+  assert.match(scoped.data.scope, /scoped to \[svc-b\] via --repos/);
+});
+
+test('verify-code: --feature auto-scopes from the feature file-links repo prefixes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-scopef-'));
+  const hub = path.join(root, 'hub');
+  fs.mkdirSync(path.join(root, 'svc-a', 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'svc-b', 'src'), { recursive: true });
+  fs.mkdirSync(hub, { recursive: true });
+  fs.writeFileSync(path.join(root, 'svc-a', 'src', 'A.java'), 'class A { void f(){ x.block(); } }\n'); // would fail
+  fs.writeFileSync(path.join(root, 'svc-b', 'src', 'B.java'), 'class B { void g(){ ok(); } }\n');
+  run(['init-project', '--stack', 'java-spring', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
+  const cfgPath = path.join(hub, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = null; cfg.verify.coverageCommand = null; cfg.verify.coverageThreshold = null;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  // Feature "demo" only wrote to svc-b (recorded via trace-link --repo).
+  run(['trace-link', '--task', '1', '--feature', 'demo', '--repo', 'svc-b', '--files', 'src/B.java'], hub);
+  const r = run(['verify-code', '--feature', 'demo'], hub);
+  assert.equal(r.data.gate, 'pass', 'auto-scope from file-links excludes the unrelated svc-a');
+  assert.deepEqual(r.data.repos, ['svc-b'], 'only the touched repo (svc-b) scanned');
+  assert.match(r.data.scope, /feature demo/);
+});
+
 test('multi-repo trace-link --repo qualifies the stored path', () => {
   const dir = tmpProject();
   run(['init-project', '--repos', 'svc-a=../svc-a'], dir);

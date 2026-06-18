@@ -20,7 +20,7 @@ allowed-tools: Read, Write, Edit, Bash, Agent
 
 > **Per-feature tag — task isolation.** EVERY TM op in this flow operates on tag `<feature>` (the feature slug): add `--tag <feature>` to CLI ops, `tag: "<feature>"` to MCP ops. This keeps each feature in its own task space, so a prior feature's (or bug/change's) tasks never collide with or block the next — the same per-feature rule as file-links. `parse-prd --tag <feature>` creates the tag; state ops are lenient (a not-yet-seeded tag just returns empty, no error).
 
-> **Multi-repo — one SRS/SD, code in sibling service repos.** Read `config.repos` from `.spec-flow/config.json` (e.g. `{ "auth-svc": "../auth-svc", "billing-svc": "../billing-svc" }`). When set, the planning `.spec-flow/` lives in THIS repo (the hub) but each task's code lives in a sibling repo. The SD labels every component/FR by service (e.g. "(auth-svc)", "(billing-svc)") — use that to pick the target repo. For each task: **`cd` into `config.repos[<service>]` to implement + build/test there**, then record the change with **`trace-link --repo <service> --files ...`** so the path is stored repo-qualified (`auth-svc/src/...`). `verify-code` and `branch-ensure` already loop over all `config.repos` automatically — you do not call them per repo. Absent `config.repos` → single-repo (everything in cwd), nothing changes.
+> **Multi-repo — one SRS/SD, code in sibling service repos.** Read `config.repos` from `.spec-flow/config.json` (e.g. `{ "auth-svc": "../auth-svc", "billing-svc": "../billing-svc" }`). When set, the planning `.spec-flow/` lives in THIS repo (the hub) but each task's code lives in a sibling repo. The SD labels every component/FR by service (e.g. "(auth-svc)", "(billing-svc)") — use that to pick the target repo. For each task: **`cd` into `config.repos[<service>]` to implement + build/test there**, then record the change with **`trace-link --repo <service> --files ...`** so the path is stored repo-qualified (`auth-svc/src/...`). `verify-code` scopes to the repos THIS feature touched when you pass `--feature <feature>` (it reads the repo prefixes from `file-links.json`) — always pass it so an unrelated repo's red WIP can't fail this feature's gate; `branch-ensure` still loops over all `config.repos`. You do not call them per repo. Absent `config.repos` → single-repo (everything in cwd), nothing changes.
 
 ## Preconditions (hard gates)
 - SD approved (0 `TODO:MANUAL-REVIEW`) — **the primary human gate**. After it, the agent runs every CLI step itself; the user never runs one. (A second, lightweight review pause may follow Step 0 — see Step 0.5 — but the user still runs nothing, only eyeballs the seeded task list.)
@@ -89,8 +89,9 @@ Returns per-FR complexity scores (1–10):
 
 4. **Automated quality gate**
    ```
-   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code [--feature <feature>]
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code --feature <feature>
    ```
+   **Multi-repo: ALWAYS pass `--feature`** (or `--repos "a,b"`). It scopes the scan to the repos this feature actually wrote to (read from `file-links.json`), so an unrelated repo sitting on a red WIP branch can't poison this feature's gate. Single-repo → `--feature` is harmless (one root). The result includes `scope` (what it narrowed to) and `repos` (what ran).
    Parse returned JSON:
    - `gate: "fail"` → `set_task_status` → `review`; surface `detail` and `fix`; **halt**.
    - `gate: "pass"` → at least one real check ran and none failed → proceed to step 5.
