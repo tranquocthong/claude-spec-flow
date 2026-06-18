@@ -282,15 +282,16 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | Cmd | Does |
 | --- | --- |
 | `init` | bootstrap `.spec-flow/` dirs + read config |
-| `init-project [--name] [--stack] [--design-type]` | **idempotent** per-project init: write `config.json` + `project-author.md` + `.gitignore` |
+| `init-project [--name] [--stack] [--design-type]` | **idempotent** per-project init: write `config.json` + `project-author.md` + `.gitignore`. **Auto-detects the stack** from build markers (`build.gradle`→java-spring, `pom.xml`→java-maven, `package.json`→node, `go.mod`→go, `pyproject.toml`/`requirements.txt`→python, `*.csproj`→dotnet) when `--stack` is omitted → seeds the matching `verify` preset |
 | `learn --note "<rule>" [--category writing\|always\|pitfall]` | evolve write-back: append timestamped rule to `project-author.md` |
 | `srs-snapshot --srs` | save SRS baseline for diffing |
 | `sd-skeleton --srs --feature [--type] [--out]` | harvest SRS → SD skeleton (dirty, by design) |
 | `route --sd` | score each FR 1–10 → fast/expand/deep |
-| `checklist-gen --sd --feature` | SD §13.2 → CHECKLIST.yaml scaffold |
-| `trace-link --task <id> --feature <f> [--fr <FR-id>] --files "p1,p2,..."` | record task→file (and optionally FR→file) links into `.spec-flow/specs/<feature>/file-links.json` (per-feature; falls back to the active feature in `trace.json` if `--feature` omitted); deduplicated, persistent across `trace-build` rebuilds |
-| `trace-build --sd [--feature] [--tasks]` | build `.spec-flow/trace.json`; merges that feature's `file-links.json` → adds `nodes.files` + `task-file`/`fr-file` links |
-| `trace-impact --ids/--keywords/--changeset` | resolve impacted FR/TC/error/task nodes + `impacted.files` (files touched by any impacted task or FR) |
+| `checklist-gen --sd --feature [--type]` | SD §13.2 → CHECKLIST.yaml scaffold. **Design-type aware**: api/hybrid (or an SD with a §9 API section) → HTTP request/expect stub; library/internal/event-driven → `live-e2e`-tagged scaffold (no fake HTTP stub) |
+| `checklist-status --feature [--file]` | classify each CHECKLIST test `filled` / `scaffold` (still has TODO stubs) / `no-verify` / `live-e2e` + a `ready` flag — know what's runnable without eyeballing the YAML |
+| `trace-link --task <id> --feature <f> [--fr <FR-id>] --files "p1,p2,..."` | record task→file (and FR→file / FR→task when `--fr` given) links into `.spec-flow/specs/<feature>/file-links.json` (per-feature; falls back to the active feature if `--feature` omitted); deduplicated, persistent across `trace-build` rebuilds |
+| `trace-build --sd [--feature] [--tasks]` | build the feature's trace; merges `file-links.json` → adds `nodes.files` + `task-file`/`fr-file`/**`fr-task`** links. Writes a **durable per-feature copy** at `specs/<feature>/trace.json` + an active-feature mirror at `.spec-flow/trace.json`. Warns on §12.2 codes that violate `conventions.errorCodePattern` |
+| `trace-impact --ids/--keywords/--changeset [--feature]` | resolve impacted FR/TC/error nodes + **tasks** (via `fr-task`) + `impacted.files` — so `/sf:change` auto-reopens the task that implemented a changed FR |
 | `srs-diff --new [--old]` | best-effort CHANGESET between two SRS versions |
 | `verify-collect --results` | parse run-checklist output → VERIFICATION truths[] |
 | `state-update --feature [--note]` | refresh `.spec-flow/STATE.md` (<100 lines) — incl. a deterministic Next Step |
@@ -300,7 +301,7 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `branch-ensure --kind sd\|bug\|change [--name\|--id\|--slug\|--type]` | create/switch the work branch from `config.json → branching` templates; only acts when on the base branch (safe no-op otherwise); `mode: off` → skipped |
 | `epic-new --name <epic> [--subs "subA,subB,subC"]` | create `.spec-flow/epics/<slug>.md` with sub-feature list; idempotent (reports `alreadyExists` if run twice) |
 | `epic-list` | list `.spec-flow/epics/*.md` with `{ id, name, status, subCount }` |
-| `verify-code [--feature <f>]` | **generic quality gate**: run tests, check coverage threshold, scan for forbidden patterns, scan for secrets — all driven by `.spec-flow/config.json → verify`; skips gracefully when unconfigured |
+| `verify-code [--feature <f>] [--repos "a,b"]` | **generic quality gate**: run tests, check coverage threshold, scan for forbidden patterns + secrets — driven by `.spec-flow/config.json → verify`; skips gracefully when unconfigured. **Multi-repo:** `--feature`/`--repos` scopes the scan to the repos that feature touched (from `file-links.json`) so an unrelated repo's red WIP can't poison the gate |
 | `doctor [--sd <SD.md>] [--feature <f>]` | **health check**: env · plugin files · install state · project init · trace health · SD gate · tasks info |
 
 </details>
@@ -329,9 +330,9 @@ PROJECT .spec-flow/  (committed by default — your spec history travels with th
 
 **One-time setup** (run once per project):
 ```
-/sf:init [--name <n>] [--stack java-spring|node|python|go|dotnet] [--design-type auto|api|internal|hybrid]
+/sf:init [--name <n>] [--stack java-spring|java-maven|node|python|go|dotnet] [--design-type auto|api|internal|hybrid]
 ```
-Writes `.spec-flow/config.json` + `.spec-flow/project-author.md`, then **asks how to track it**:
+`--stack` is **auto-detected from build markers** when omitted (gradle/maven/node/go/python/dotnet). Writes `.spec-flow/config.json` + `.spec-flow/project-author.md`, then **asks how to track it**:
 - **Commit (default)** — `.spec-flow/` is tracked; its git log is the spec-evolution history. Then `git add .spec-flow/ && git commit`.
 - **Keep local** — adds `.spec-flow/` to the project `.gitignore`; nothing committed. (Flag: `/sf:init --no-commit-docs`.)
 
@@ -358,7 +359,7 @@ spec-flow is branch-aware and **VCS-agnostic** (GitHub + GitLab). The policy liv
 - **Bugs / changes** get `fix/<id>-<slug>` and `<type>/<id>-<slug>` via the same engine command.
 - **No commit on base.** `branch-ensure` only creates/switches when you're on `base`; on a work branch it's a safe no-op (never switches a dirty tree). The bundled **commit** skill refuses to commit on `base` while `mode != off`, generates the conventional-commit message, pushes, and surfaces the MR/PR link. Set `mode: off` to opt out (commit on current branch).
 
-**Merge-conflict note.** `trace.json` and `STATE.md` are single global files describing the *active* feature (regenerated by `trace-build`). Sequential work (one SD at a time) never conflicts. Parallel branches can collide on merge — but the conflict is **benign**: both are derived artifacts, so take either side and re-run `trace-build`. (Heavy-parallel teams can gitignore these volatile files and commit only the durable ones.)
+**Merge-conflict note.** Each feature's trace is durable at `specs/<feature>/trace.json` (keyed by the feature dir → building feature B can never clobber feature A). The global `.spec-flow/trace.json` + `STATE.md` are just an *active-feature mirror* (regenerated by `trace-build`). Sequential work never conflicts; parallel branches can collide only on the mirror — a **benign** derived-artifact conflict (take either side, re-run `trace-build`). (Heavy-parallel teams can gitignore the volatile mirror and keep the per-feature copies.)
 </details>
 
 <details><summary><b>Non-negotiable gates</b></summary>
@@ -382,8 +383,11 @@ skills/manual-test/ bundled local-test harness (CHECKLIST.yaml, run-checklist.sh
 skills/commit/     bundled conventional-commit + push skill (VCS-agnostic, base-branch guard)
 agents/           sd-author (SRS→clean SD) · hybrid-executor (impl one task)
 hooks/            checklist-to-verification (PostToolUse) · sd-drift-detect (PreToolUse) · spec-flow-anchor (UserPromptSubmit re-anchor)
-bin/flow-tools.cjs  deterministic engine (pure, testable, Result contract)
-templates/        sd-template.md · srs-template.md
+bin/flow-tools.cjs  thin CLI entry + workflow commands (trace/verify/checklist/state/bug/epic/branch/status)
+lib/core.cjs        shared infra + SRS/SD parsers + genSd (no command logic)
+lib/maintenance.cjs static, non-workflow commands: init · init-project · learn · doctor
+templates/        sd-template.md · srs-template.md · lang/{en,vi}.json (SRS-parse keyword packs)
+test/             *.test.cjs — flow-tools (CLI) · core · maintenance unit suites (`node --test test/*.test.cjs`)
 .mcp.json         wires Task Master via npx
 ```
 
@@ -392,7 +396,7 @@ templates/        sd-template.md · srs-template.md
 - `.spec-flow/specs/<feature>/SD.md` — the Solution Design (your control point).
 - `.spec-flow/specs/<feature>/CHECKLIST.yaml` — manual-test checklist, co-located with the SD; persistent regression coverage. (Driven via the bundled manual-test skill, which spec-flow calls with this explicit path; the skill itself stays generic.)
 - `.spec-flow/specs/<feature>/file-links.json` — **per-feature** task→file and FR→file mappings (written by `trace-link`); scoped per feature so traces stay bounded + unambiguous; survives `trace-build` rebuilds.
-- `.spec-flow/trace.json` — traceability matrix for the active feature: SRS§ → SD§ → FR/TC/NFR → error → state → task → **source FILE**. Backbone of the change loops.
+- `.spec-flow/specs/<feature>/trace.json` — **durable per-feature** traceability matrix: SRS§ → SD§ → FR/TC/NFR → error → state → task → **source FILE**. Backbone of the change loops. `.spec-flow/trace.json` is an active-feature mirror of the last-built one.
 - `.spec-flow/snapshots/` — immutable SRS baselines frozen at each ingest/resync, for diffing (never hand-edit).
 - `.spec-flow/changes/` — dev fix/enhance loop audit trail · `.spec-flow/bugs/` — bug records (triage, resolution log, regression-test link).
 - `.spec-flow/STATE.md` — <100-line living index (resume after `/clear`) · `.spec-flow/VERIFICATION.md` — goal-backward verification, fed by manual-test results.
@@ -414,9 +418,9 @@ All dependencies are pinned — updates are deliberate and tested, never automat
 
 ## Status & known limits
 
-- Engine (22 `flow-tools` cmds) + hooks + commands + agents: **built & verified**.
-- **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
-- **In active dogfooding** — used on real projects; the v0.0.2x fixes (rename `/sf:change`, brownfield `/sf:bug`, interview-mode ingest, per-feature task tags, co-located CHECKLIST) all came from live-use feedback. Not yet a confident team-wide release.
+- Engine (23 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 67 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
+- **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8, now **per file**) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
+- **In active dogfooding** — used on real projects; fixes ship straight from live-use feedback (recent: per-feature durable trace, multi-repo verify-code scoping, design-type-aware checklist-gen, ID-prefix SRS harvest for non-English specs). Not yet a confident team-wide release.
 - SRS harvest is intentionally dirty; `sd-author` (AI) cleans it — don't judge the harvest output directly.
 - Needs **1–2 finetune loops on a real SRS** (adjust the `sd-author` prompt to your team's writing) before a confident team release.
 - **Large features**: SDs with >25 FRs or >800 generated lines are flagged epic-scale — `sd-skeleton` returns an advisory (never blocking) to `/sf:split`.
