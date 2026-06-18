@@ -1,13 +1,17 @@
 #!/bin/sh
-# Charter §0b #8 — engine hard ceiling 3000 LOC. DEV-TIME ONLY (not shipped with the plugin).
+# Charter §0b #8 — engine readability ceiling 3000 LOC PER FILE. DEV-TIME ONLY (not shipped).
+# (Pre-v0.4.0 this was a single-file monolith cap; the engine is now modular — bin entry +
+#  lib/*.cjs — so the cap is per-file: no single engine file may become a 3000-line monster.)
 # One-time per clone:  git config core.hooksPath .githooks
-CAP=3000; WARN=2700; engine="bin/flow-tools.cjs"
-[ -f "$engine" ] || exit 0
-loc=$(wc -l < "$engine" | tr -d ' ')
-if [ "$loc" -ge "$CAP" ]; then
-  echo "BLOCKED: $engine = $loc/$CAP LOC — engine FROZEN (charter §0b #8)."
-  echo "Stable-use: add NO new engine code; only delete/consolidate down to commit."
-  exit 1
-fi
-[ "$loc" -ge "$WARN" ] && echo "WARN: $engine = $loc/$CAP LOC — approaching cap; consolidate/delete before adding."
-exit 0
+CAP=3000; WARN=2700; rc=0
+for engine in bin/flow-tools.cjs lib/*.cjs; do
+  [ -f "$engine" ] || continue
+  loc=$(wc -l < "$engine" | tr -d ' ')
+  if [ "$loc" -ge "$CAP" ]; then
+    echo "BLOCKED: $engine = $loc/$CAP LOC — split/consolidate before committing (charter §0b #8)."
+    rc=1
+  elif [ "$loc" -ge "$WARN" ]; then
+    echo "WARN: $engine = $loc/$CAP LOC — approaching cap; split into another lib/ module before adding."
+  fi
+done
+exit $rc

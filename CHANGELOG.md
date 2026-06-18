@@ -2,6 +2,18 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.4.0] — 2026-06-18
+
+Engine modularization — static commands split out of the monolith (no behavior change).
+
+- **`bin/flow-tools.cjs` (2914 LOC monolith) split into 3 modules:**
+  - `lib/core.cjs` (~545) — shared infra (PATHS, Result helpers, repo/trace resolvers) + deterministic SRS/SD parsers + `genSd`. No command logic.
+  - `lib/maintenance.cjs` (~572) — static, non-workflow commands: `init`, `init-project`, `learn`, `doctor` (setup + health + meta).
+  - `bin/flow-tools.cjs` (~1826) — thin CLI entry + the workflow commands (trace/verify/checklist/state/bug/epic/branch/status). Requires the two libs and dispatches.
+- The CLI contract is unchanged — `node bin/flow-tools.cjs <command>` works exactly as before (all 39 tests, which drive the real CLI seam, pass untouched). `PLUGIN_ROOT` resolves identically from `lib/` (one level under repo root, same as `bin/`).
+- **Charter §0b #8 reinterpreted:** the 3000-LOC ceiling is now **per engine file** (no single file becomes a monolith) rather than one monolith cap. The pre-commit hook guards `bin/flow-tools.cjs` + `lib/*.cjs` individually. bin is now well under the 2700 warn line, leaving room to grow the engine modularly (e.g. the deferred G1 drift-check).
+- No test count change (39). Workflow commands staying in `bin` can be split into their own lib module later if desired.
+
 ## [0.3.16] — 2026-06-18
 
 Enforce the project's error-code pattern (deterministic, opt-in).
