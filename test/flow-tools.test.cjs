@@ -736,6 +736,33 @@ test('REGRESSION #3 trace-impact: a changed FR reaches the implementing task via
   assert.ok(r.data.impacted.tasks.includes('7'), 'changed FR-001 reaches implementing task 7 (was [] pre-fix)');
 });
 
+test('#4 status-report: surfaces declared live gaps from VERIFICATION.md', () => {
+  // verified-adhoc ship with "not verified live" items must be VISIBLE in /sf:status,
+  // not buried in prose. status-report extracts bullets under a gaps heading.
+  const dir = tmpProject();
+  initProject(dir);
+  // Minimal feature surface so featureName resolves + a VERIFICATION with a gaps section.
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), '# SD: demo\n');
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'VERIFICATION.md'), [
+    '# VERIFICATION — demo',
+    'status: verified-adhoc',
+    '',
+    '## Not verified live',
+    '- webhook delivery end-to-end (outbox→CDC→publisher→callback)',
+    '- DLT replay on publisher 5xx',
+    '',
+    '## Notes',
+    '- something else',
+    '',
+  ].join('\n'));
+  const r = run(['status-report', '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.verifiedGaps.length, 2, 'two live gaps extracted (Notes section excluded)');
+  assert.match(r.data.verifiedGaps[0], /webhook delivery/);
+});
+
 test('checklist-status: classifies tests filled / scaffold / no-verify / live-e2e', () => {
   const dir = tmpProject();
   initProject(dir);

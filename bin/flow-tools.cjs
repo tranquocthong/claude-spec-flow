@@ -2775,11 +2775,25 @@ const commands = {
       }
     }
 
-    // Verification status
+    // Verification status + any declared live gaps. Transparent: a verified-adhoc
+    // ship with open "not verified live" items must be VISIBLE in /sf:status, not
+    // buried in VERIFICATION prose (else it's forgotten at merge). Convention: bullet
+    // lines under a "Deferred / Not verified live / Live gaps" heading.
     const verifPath = path.join(PATHS.stateDir, 'VERIFICATION.md');
     let verified = null;
+    let verifiedGaps = [];
     if (fs.existsSync(verifPath)) {
-      try { verified = /status:\s*passed/i.test(fs.readFileSync(verifPath, 'utf8')); } catch {}
+      try {
+        const vc = fs.readFileSync(verifPath, 'utf8');
+        verified = /status:\s*passed/i.test(vc);
+        const gm = vc.match(/^#{1,6}\s*(?:deferred|not[- ]verified[- ]live|live gaps?)\b.*$/im);
+        if (gm) {
+          const after = vc.slice(vc.indexOf(gm[0]) + gm[0].length);
+          const stop = after.search(/^#{1,6}\s/m);
+          verifiedGaps = (stop >= 0 ? after.slice(0, stop) : after)
+            .split(/\r?\n/).map(l => l.match(/^\s*[-*]\s+(.*\S)\s*$/)).filter(Boolean).map(m => m[1].slice(0, 80));
+        }
+      } catch {}
     }
 
     // Latest SRS snapshot
@@ -2833,9 +2847,10 @@ const commands = {
       } else if (taskCounts.review > 0) {
         nextStep = `${taskCounts.review} task(s) in \`review\` — \`/sf:phase ${featureName}\` picks them up first: re-runs each task's smoke → passed closes it, failed re-attempts (or halts to ask). \`next_task\` alone skips \`review\`, which is why re-running the loop is the right move, not a no-op.`;
       } else {
+        const gapTail = verifiedGaps.length ? ` ${verifiedGaps.length} live gap(s) NOT verified live — confirm acceptable before merge.` : '';
         nextStep = verified
-          ? 'Done + verified — ship: stage, then `commit` skill (push).'
-          : `Done — run regression: \`run-checklist ${featureName} --tag regression\` → \`verify-collect\`.`;
+          ? `Done + verified — ship: stage, then \`commit\` skill (push).${gapTail}`
+          : `Done — run regression: \`run-checklist ${featureName} --tag regression\` → \`verify-collect\`.${gapTail}`;
       }
     }
 
@@ -2855,6 +2870,7 @@ const commands = {
       tasks: taskCounts.total > 0 ? taskCounts : null,
       ready: ready.length > 0 ? ready : null,
       verified,
+      verifiedGaps,
       latestSnapshot,
       bugsOpen,
       changesOpen,

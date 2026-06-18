@@ -75,6 +75,7 @@ Returns per-FR complexity scores (1–10):
    mcp__task-master-ai__set_task_status --id=<id> --status=review                                                  # state op → MCP
    ```
    Use **`update-task --append`** (logs onto the task itself), NOT `update-subtask --id=<id>`: `update-subtask` requires a `parent.sub` id and fails for any task that was not expanded into subtasks (the common solo/fast-path case — "requires parentId.subtaskId"). `--append` works for both expanded and un-expanded tasks.
+   **Cost note:** `update-task --append` is an AI op (one CLI call per task — slow over many tasks). It is **optional human-readable history**, not the source of truth: the deterministic record is `trace-link` (files touched — a zero-AI state op) + `state-update` + the TM status. If per-task AI latency is a problem, **batch one note at task close** or skip it; do NOT skip `trace-link`/`set_task_status` (those are the disk facts `/sf:status` reads).
    If executor did not call `trace-link`, run it from the executor's reported file list:
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-link \
@@ -136,6 +137,8 @@ Returns per-FR complexity scores (1–10):
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-collect --results .spec-flow/specs/<feature>/regression-results.txt
    ```
    `verify-collect` reads the runner's final `{passed,failed}` JSON line (it errors `NO_JSON_RESULTS` if you forgot `--json`). Append `truths[]` to `VERIFICATION.md must_haves.truths`. `VERIFICATION.md status: passed` only when zero regression failures.
+
+   **Live gaps — make them first-class.** If anything shipped on `verified-adhoc` / could NOT be machine-verified (event-driven delivery, cross-service flow, a `[live-e2e]` TC), list each under a `## Not verified live` heading in `VERIFICATION.md`, one `- ` bullet per gap. `status-report` reads these and `/sf:status` shows "N live gap(s)" so they are not forgotten at merge. Do NOT bury them in prose.
 
 3. **Final state sync**
    ```

@@ -2,6 +2,15 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.3.15] — 2026-06-18
+
+Live-gap transparency, project-aware error codes, and a cost note on per-task logging.
+
+- **`status-report` surfaces declared live gaps (#4).** A `verified-adhoc` ship's "not verified live" items (event-driven delivery, cross-service flows, `[live-e2e]` TCs) were free prose, easy to forget at merge. Now `status-report` reads bullets under a `## Not verified live` / `## Deferred` / `## Live gaps` heading in `VERIFICATION.md` and returns `verifiedGaps[]`; `/sf:status` shows "N live gap(s)" and lists them. `/sf:phase` close-out documents the convention. No new command (transparent, lightweight).
+- **Error codes follow the project pattern (sd-author §C).** sd-author no longer imposes a fixed `ERR_<DOMAIN>_<NNN>`; it now mirrors the project's existing error-code shape (grep brownfield enums; honor `conventions.errorCodePrefix` / `project-author.md`), falling back to a single-token `ERR_<DOMAIN>_<NNN>` only when no pattern exists (avoids stacked names like `ERR_WEBHOOK_PGMS_LOOKUP_002`).
+- **Per-task `update-task --append` documented as optional (#5).** Clarified in `/sf:phase` + `hybrid-executor` that the AI-op note is human-readable history, not the source of truth (`trace-link` + `set_task_status` are the deterministic disk facts) — batch at task close or skip if AI latency over many tasks is a problem. No new machinery (Task Master is external).
+- +1 test (38 total). Engine 2878 → 2894 LOC.
+
 ## [0.3.14] — 2026-06-18
 
 New `checklist-status` command — know what's ready without eyeballing the YAML.
