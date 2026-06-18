@@ -2,6 +2,17 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.4.1] — 2026-06-18
+
+Ingest→checklist→phase UX fixes from real session friction, plus per-lib unit tests.
+
+- **#1 checklist-gen is design-type aware.** It used to scaffold `GET /api/v1/TODO` for every test even on a library/internal/event-driven feature with no HTTP surface (forcing a full manual rewrite). It now reads the SD's `Design type: **...**` preamble (or `--type`, or absence of a §9 API section) and, for non-HTTP features, emits a `live-e2e`-tagged scaffold instead of a fake HTTP stub. API/hybrid features keep the HTTP stub.
+- **#2 sd-skeleton harvests FR/NFR/TC by ID-prefix (language-independent).** A structured SRS table like `| FR-1 | MUST | ... |` under a non-English heading harvested 0 rows (detection was purely heading/header-keyword based) and dumped everything on sd-author. Since FR-/NFR-/TC- IDs are always English-canonical, `parseSrs` now also finds a table by its first-column ID prefix as a fallback, and `genSd` harvests those rows.
+- **#3 init-project auto-detects the stack.** With `--stack` omitted it now detects from build markers (`build.gradle`→java-spring, `pom.xml`→java-maven with `mvn test`, `package.json`→node, `go.mod`→go, `requirements.txt`/`pyproject.toml`→python, `*.csproj`→dotnet) so the verify gate isn't silently empty. New `java-maven` preset. Explicit `--stack` still wins; no markers → `unknown` (unchanged).
+- **#4 one source of truth for `no-verify`/`live-e2e`.** `checklist-status` matched the bracketed `[no-verify]` literal while `lint-checklist` read the bare `no-verify` tag — so a `tags: [..., live-e2e]` entry could be recognized by one tool but not the other. Both now key on the bare token in the `tags:` list; `checklist.md` documents the tags-list as the single canonical place.
+- **#5 no `srs-` slug drift.** An H1 like `# SRS: Outbox CDC` derived a `srs-outbox-cdc` feature slug that drifted from the `--feature outbox-cdc` the rest of the flow used. `parseSrs` now strips a leading `SRS:` doc-type prefix from the derived feature name.
+- **Tests:** engine split into per-lib suites — new `test/core.test.cjs` (15, direct-require unit tests for the parsers/helpers) and `test/maintenance.test.cjs` (8, the static commands) alongside `test/flow-tools.test.cjs` (44, CLI integration). 67 total. Run all: `node --test test/*.test.cjs`.
+
 ## [0.4.0] — 2026-06-18
 
 Engine modularization — static commands split out of the monolith (no behavior change).

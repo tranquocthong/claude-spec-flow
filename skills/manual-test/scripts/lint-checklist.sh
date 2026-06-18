@@ -89,10 +89,15 @@ for si, suite in enumerate(suites):
             or exp.get("json_path") or exp.get("poll")
         )
         has_verify = bool(t.get("verify"))
-        if not (has_verify or has_body or has_assert) and "no-verify" not in (t.get("tags") or []):
+        # Carve-out tags: no-verify (assertion-only/status-only/pure-unit) and live-e2e
+        # (no synchronous HTTP surface — verified by a live run, not curl). Same source of
+        # truth as checklist-status: a bare tag in the tests[].tags list.
+        _tags = t.get("tags") or []
+        _carved = ("no-verify" in _tags) or ("live-e2e" in _tags)
+        if not (has_verify or has_body or has_assert) and not _carved:
             has_status = "status" in exp
             hint = "a bare expect.status is not a sufficient assertion — also assert the response body" if has_status else "add an assertion"
-            issues.append(f"$.suites[{si}].tests[{ti}] ({t.get('id','?')}): {hint}. Use expect.body / body_contains / json_path (incl. error-body for rejection tests), a verify: block (mutation), expect.poll (async), OR tag [no-verify] for assertion-only/status-only checks.")
+            issues.append(f"$.suites[{si}].tests[{ti}] ({t.get('id','?')}): {hint}. Use expect.body / body_contains / json_path (incl. error-body for rejection tests), a verify: block (mutation), expect.poll (async), OR tag the test no-verify (assertion-only) / live-e2e (no HTTP surface).")
 
 if issues:
     for it in issues:

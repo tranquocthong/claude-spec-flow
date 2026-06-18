@@ -93,6 +93,16 @@ const commands = {
     const { tc } = readSdTables(sd);
     if (!tc || !tc.rows.length) return err('NO_TC_TABLE: SD §13.2 Test Cases not found');
     const feature = args.feature || slugify(path.basename(path.dirname(path.resolve(sd))) || 'feature');
+
+    // Design type → decide HTTP-stub vs live-e2e scaffold. A library/internal/event-driven
+    // feature has NO synchronous HTTP surface, so a `GET /api/v1/TODO` stub is wrong (forces
+    // the user to rewrite every test). Read the SD preamble's `Design type: **...**`, or
+    // `--type`, or fall back to whether the SD has a §9 API section.
+    const sdText = fs.readFileSync(sd, 'utf8');
+    const dtMatch = sdText.match(/Design type:\s*\*\*([^*]+)\*\*/i);
+    const hasApiSection = /^#{2,3}\s*9(\.\d+)?\s+API/im.test(sdText);
+    const designType = String(args.type || (dtMatch && dtMatch[1]) || (hasApiSection ? 'api' : 'internal')).trim().toLowerCase();
+    const httpSurface = designType === 'api' || designType === 'hybrid' || hasApiSection;
     const q = (s) => '"' + String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 
     // Resolve columns by HEADER NAME, not position. sd-skeleton emits 4 cols
@@ -159,16 +169,28 @@ const commands = {
         const expTxt = String(t.expected || '').replace(/\s+/g, ' ').trim().slice(0, 110) || '(see SD §13.2)';
         L.push(`      - id: ${t.tcId}`);
         L.push(`        name: ${q(t.testCase)}`);
-        L.push(`        tags: [${tag}]`);
-        L.push(`        # SD Expected Result: ${expTxt}`);
-        L.push('        request:    # method/path/token from SD §9.2 / §8 — GET for read/masking, POST/PUT/DELETE if mutating');
-        L.push('          method: GET');
-        L.push('          path: /api/v1/TODO');
-        L.push('          token: user_token');
-        L.push('        expect:');
-        L.push(`          status: ${t.isEdge ? 422 : 200}   # confirm vs SD §9.3 / §12.2`);
-        L.push('          body:     # read/transform: assert the response field(s) above. MUTATION: replace this body with a verify: SQL delta block.');
-        L.push('            _assert: TODO');
+        if (httpSurface) {
+          L.push(`        tags: [${tag}]`);
+          L.push(`        # SD Expected Result: ${expTxt}`);
+          L.push('        request:    # method/path/token from SD §9.2 / §8 — GET for read/masking, POST/PUT/DELETE if mutating');
+          L.push('          method: GET');
+          L.push('          path: /api/v1/TODO');
+          L.push('          token: user_token');
+          L.push('        expect:');
+          L.push(`          status: ${t.isEdge ? 422 : 200}   # confirm vs SD §9.3 / §12.2`);
+          L.push('          body:     # read/transform: assert the response field(s) above. MUTATION: replace this body with a verify: SQL delta block.');
+          L.push('            _assert: TODO');
+        } else {
+          // No HTTP surface (design-type: internal/library/event-driven) → live-e2e scaffold,
+          // NOT a fake HTTP stub. Tagged live-e2e so checklist-status/lint treat it as verified
+          // by a live run (surfaced as a VERIFICATION live gap). Retag [no-verify] if it's a
+          // pure unit transform owned by BUILD.
+          L.push(`        tags: [${tag}, live-e2e]`);
+          L.push(`        # SD Expected Result: ${expTxt}`);
+          L.push(`        # [live-e2e] design-type ${designType}: no synchronous HTTP surface — verify by a live`);
+          L.push('        # run / observe the event or side-effect, then record it as a VERIFICATION live gap.');
+          L.push('        # If this is a pure unit transform (a util case, no integration), retag [no-verify].');
+        }
       }
     }
     const yaml = L.join('\n') + '\n';
@@ -206,8 +228,11 @@ const commands = {
     }
     const classify = (t) => {
       const blob = t.id + '\n' + t.body.join('\n');
-      if (/\[no-verify\]/i.test(blob)) return 'no-verify';
-      if (/\[live-e2e\]/i.test(blob)) return 'live-e2e';
+      // Match the bare token (word-boundary) so BOTH a tags-list entry (`tags: [smoke, no-verify]`)
+      // AND a bracketed-name marker (`[no-verify]`) are recognized — same source of truth as
+      // lint-checklist (which reads the tags list). Avoids the "mark it in two places" trap.
+      if (/\bno-verify\b/i.test(blob)) return 'no-verify';
+      if (/\blive-e2e\b/i.test(blob)) return 'live-e2e';
       if (/\/api\/v1\/TODO|_assert:\s*TODO/.test(blob)) return 'scaffold';
       return 'filled';
     };
