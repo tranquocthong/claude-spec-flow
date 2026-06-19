@@ -2,6 +2,15 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.1] — 2026-06-19
+
+Generic coding standards + fix `config.language` bleeding into code.
+
+- **Bug: `config.language` ≠ `en` made the executor write code comments in that language.** The anchor hook injected a session-wide "Respond in `<lang>`" directive whose only carve-out was *code identifiers* — comments, log/error strings, error codes, test names, and commit messages were unprotected, so the model in (e.g.) Vietnamese mode wrote Vietnamese comments. `config.language` is meant for conversation + authored docs (SD/CONTEXT prose) only, never code.
+- **New `references/coding-standards.md`** — a deliberately short, all-language baseline the executor applies (only the things the agent would otherwise get wrong or that are spec-flow-specific): (1) every in-code artifact — comments, identifiers, log/error messages, error codes, test names, commit messages — is **English** regardless of `config.language`; (2) follow the project's existing style/idioms before any generic preference; (3) stay in scope (smallest change for the FR; broader changes go through `/sf:change`).
+- **Enforcement across the three touch-points:** the anchor hook (`hooks/spec-flow-anchor.sh`) now states the language directive applies only to conversation + docs and that all code stays English; `agents/hybrid-executor.md` reads the standard and carries the English-code hard rule inline; `commands/phase.md` notes it at executor-spawn time.
+- Doc + hook only — **no engine change** (engine unchanged; cap untouched).
+
 ## [0.5.0] — 2026-06-18
 
 G1 — Layer-2 semantic drift-check (closes the #1 design debt: the advertised "early SD-mismatch detection" that didn't really exist).

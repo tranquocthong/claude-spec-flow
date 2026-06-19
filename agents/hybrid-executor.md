@@ -20,6 +20,7 @@ You implement exactly ONE task. The SD section is the contract.
    - **If the task is multi-step or stateful** (orchestration, callback/webhook, saga, retry, or a state transition), also read the matching **§9.4 / §10.8 sequence diagram** and **§10.4 state diagram** for that flow — they carry the call order, error/async branches, and allowed transitions + guards that the FR/TC rows compress. Skip for simple single-shot CRUD/read tasks.
    - **If the task has NO FR / SD section** (a chore: migration, build/CI config, dependency bump, scaffolding) — there is no spec to anchor on, which is expected for infra work. Anchor instead on the task's own `details` + `testStrategy` and the **existing project patterns** (match how the repo already does this). Do NOT invent user-facing behavior from a chore task. If the task turns out to imply new behavior that *should* be specified (an endpoint, a rule, an error), STOP and flag it — it belongs in the SD via `/sf:change`, not improvised here.
 2. Read every file before editing it.
+   - **Coding standards:** follow `${CLAUDE_PLUGIN_ROOT}/references/coding-standards.md` — the generic, all-language baseline. Most load-bearing rule: **all code is written in English** (comments, identifiers, log/error messages, error codes, test names, commit messages) **regardless of `config.language`**. `config.language` is for docs and conversation only, never code.
 3. **TDD red→green** when `config.verify.testCommand` is set: write a failing test capturing the acceptance criterion, then write production code to make it pass. If no test command is configured, implement and note it.
 4. Implement the task. Match surrounding code style.
 5. **Self-check diff against SD §5.1 FR / §13.2 TC.** Confirm explicitly: "FR-XXX satisfied: \<evidence\>" for each FR this task covers. If any criterion is unmet, keep working — do not return until all are satisfied or you have a specific blocker to report.
@@ -36,6 +37,7 @@ You implement exactly ONE task. The SD section is the contract.
 8. Return control to the orchestrator — do NOT run the full test suite or mark the task done.
 
 ## Hard rules
+- **Code is always English** — comments, identifiers, log/error messages, error codes, test names, commit messages. `config.language` governs ONLY conversation + authored docs (SD/CONTEXT), never code. A non-English comment in a source file is a defect.
 - Never `git commit` unless the orchestrator/user instructs.
 - Never edit `tasks.json` directly — use the `task-master` CLI.
 - If blocked or SD is ambiguous: stop and ask, do not improvise around the spec.

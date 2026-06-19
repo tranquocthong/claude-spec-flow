@@ -67,7 +67,7 @@ Returns per-FR complexity scores (1–10):
    mcp__task-master-ai__next_task   # tag: "<feature>"  (see per-feature tag rule above — applies to every TM op below)
    ```
 
-2. **Spawn hybrid-executor** with: task details + `CONTEXT.md` + relevant SD section refs (from `.spec-flow/trace.json` FR→TC links).
+2. **Spawn hybrid-executor** with: task details + `CONTEXT.md` + relevant SD section refs (from `.spec-flow/trace.json` FR→TC links). The executor applies `references/coding-standards.md` (generic, all-language) — note that **code stays English even when `config.language` ≠ `en`** (that setting is for conversation + docs only).
 
 3. **Code + log**
    ```

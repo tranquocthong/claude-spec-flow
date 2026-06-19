@@ -29,7 +29,9 @@ if [ -f "$CONFIG_FILE" ]; then
     | sed -n 's/.*"language"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   if [ -n "$language" ] && [ "$language" != "en" ]; then
     echo "[spec-flow] Respond to the user in: ${language} (project config.language)."
-    echo "  Keep SD section headings, table column headers, FR/TC/NFR IDs, and code identifiers in canonical English."
+    echo "  This applies ONLY to conversational replies and authored docs (SD/CONTEXT prose)."
+    echo "  ALL code stays English: comments, identifiers, log/error messages, error codes, test names, commit messages."
+    echo "  Also keep SD section headings, table column headers, and FR/TC/NFR IDs in canonical English."
   fi
 fi
 
