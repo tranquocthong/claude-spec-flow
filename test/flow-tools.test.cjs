@@ -469,6 +469,54 @@ test('multi-repo trace-link --repo qualifies the stored path', () => {
 });
 
 // ---------------------------------------------------------------------------
+// TDD RED-phase gate: verify-code --expect fail (v0.5.2)
+// ---------------------------------------------------------------------------
+
+test('verify-code --expect fail: failing test → gate "red-confirmed"', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  // Override verify block: testCommand always exits non-zero (simulates a failing test)
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify = { testCommand: 'exit 1', coverageThreshold: null, forbiddenPatterns: [], secretScan: false };
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  const r = run(['verify-code', '--expect', 'fail'], dir);
+  assert.equal(r.ok, true, 'never throws');
+  assert.equal(r.data.gate, 'red-confirmed', 'failing tests confirm RED');
+  const testCheck = r.data.checks.find(c => c.name === 'tests');
+  assert.equal(testCheck.status, 'ok', 'test check is ok when RED confirmed');
+  assert.match(testCheck.detail, /RED confirmed/);
+  // coverage / forbidden-patterns / secret-scan must be skipped in RED-phase
+  ['coverage', 'forbidden-patterns', 'secret-scan'].forEach(n => {
+    const c = r.data.checks.find(ch => ch.name === n);
+    assert.equal(c && c.status, 'skipped', `${n} skipped in RED-phase`);
+  });
+});
+
+test('verify-code --expect fail: passing test → gate "fail" (RED not confirmed)', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify = { testCommand: 'exit 0', coverageThreshold: null, forbiddenPatterns: [], secretScan: false };
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  const r = run(['verify-code', '--expect', 'fail'], dir);
+  assert.equal(r.ok, true, 'never throws');
+  assert.equal(r.data.gate, 'fail', 'passing tests before implementation = RED not confirmed');
+  const testCheck = r.data.checks.find(c => c.name === 'tests');
+  assert.equal(testCheck.status, 'fail', 'test check is fail when RED not confirmed');
+  assert.match(testCheck.detail, /RED not confirmed/);
+});
+
+test('verify-code --expect fail: no testCommand → gate "skipped"', () => {
+  const dir = tmpProject();
+  // No verify block at all (tmpProject default has no config.json / no verify block).
+  const r = run(['verify-code', '--expect', 'fail'], dir);
+  assert.equal(r.ok, true, 'never throws');
+  assert.equal(r.data.gate, 'skipped', 'no testCommand → RED cannot be machine-confirmed');
+});
+
+// ---------------------------------------------------------------------------
 // Audit-hardening regressions (v0.3.0)
 // ---------------------------------------------------------------------------
 

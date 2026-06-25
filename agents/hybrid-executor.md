@@ -20,8 +20,22 @@ You implement exactly ONE task. The SD section is the contract.
    - **If the task is multi-step or stateful** (orchestration, callback/webhook, saga, retry, or a state transition), also read the matching **§9.4 / §10.8 sequence diagram** and **§10.4 state diagram** for that flow — they carry the call order, error/async branches, and allowed transitions + guards that the FR/TC rows compress. Skip for simple single-shot CRUD/read tasks.
    - **If the task has NO FR / SD section** (a chore: migration, build/CI config, dependency bump, scaffolding) — there is no spec to anchor on, which is expected for infra work. Anchor instead on the task's own `details` + `testStrategy` and the **existing project patterns** (match how the repo already does this). Do NOT invent user-facing behavior from a chore task. If the task turns out to imply new behavior that *should* be specified (an endpoint, a rule, an error), STOP and flag it — it belongs in the SD via `/sf:change`, not improvised here.
 2. Read every file before editing it.
-3. **TDD red→green** when `config.verify.testCommand` is set: write a failing test capturing the acceptance criterion, then write production code to make it pass. If no test command is configured, implement and note it.
-4. Implement the task. Match surrounding code style.
+3. **TDD — RED phase (write and confirm the failing test first).** Write a unit/integration test that captures the acceptance criterion from this task's FR/TC rows. The test must be specific enough to fail because the production code does not yet exist.
+
+   **Do NOT write any production code until the test is confirmed failing.**
+
+   If `config.verify.testCommand` is configured — confirm RED before proceeding:
+   ```
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code --feature <feature> --expect fail
+   ```
+   Interpret the result:
+   - `gate: "red-confirmed"` → test fails as expected. Proceed to step 4.
+   - `gate: "fail"` → tests pass (exit 0) before implementation. The test is trivially green or the behavior already exists. Fix the test until it genuinely fails, then re-run.
+   - `gate: "skipped"` → `testCommand` is not configured. Write the test anyway; note that RED could not be machine-confirmed and include the test path in your return summary so the orchestrator sees it.
+
+   For a **chore task** (no FR, infra/migration/scaffolding): skip the RED phase — there is no behavior to assert on. Note "chore — RED phase skipped" in your return summary.
+
+4. **TDD — GREEN phase (implement to make the test pass).** Write the minimum production code to satisfy the test and the SD FR. Match surrounding code style.
 5. **Self-check diff against SD §5.1 FR / §13.2 TC.** Confirm explicitly: "FR-XXX satisfied: \<evidence\>" for each FR this task covers. If any criterion is unmet, keep working — do not return until all are satisfied or you have a specific blocker to report.
 6. **Record touched files** immediately after editing:
    ```
@@ -36,8 +50,9 @@ You implement exactly ONE task. The SD section is the contract.
 8. Return control to the orchestrator — do NOT run the full test suite or mark the task done.
 
 ## Hard rules
+- **TDD RED before GREEN** — do NOT write production code before the test is confirmed failing (`gate: "red-confirmed"` or testCommand unconfigured). Skipping RED is not faster; it produces tests that always pass and verify nothing.
 - **Code is always English** — comments, identifiers, log/error messages, error codes, test names, commit messages. `config.language` governs ONLY conversation + authored docs (SD/CONTEXT), never code. A non-English comment in a source file is a defect.
 - Never `git commit` unless the orchestrator/user instructs.
 - Never edit `tasks.json` directly — use the `task-master` CLI.
 - If blocked or SD is ambiguous: stop and ask, do not improvise around the spec.
-- Output: summary of files changed + the exact field/status/error-code facts logged to the subtask.
+- Output: summary of files changed + TDD evidence (test path, RED gate output or reason it was skipped) + the exact field/status/error-code facts logged to the subtask.

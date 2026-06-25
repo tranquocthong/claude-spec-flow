@@ -1319,6 +1319,9 @@ const commands = {
   // -----------------------------------------------------------------------
   'verify-code'(args) {
     const { spawnSync } = require('child_process');
+    // --expect fail: RED-phase mode — test must FAIL before implementation.
+    // Inverts pass/fail logic for the test check and skips the other checks.
+    const expectFail = args.expect === 'fail';
 
     // --- helper: one check entry -----------------------------------------
     const makeCheck = (name, status, detail, fix) =>
@@ -1422,6 +1425,16 @@ const commands = {
           testStatus = 'fail';
           testDetail = `Command error: ${result.error.message}`;
           testFix = `Check testCommand in .spec-flow/config.json: "${testCommand}"`;
+        } else if (expectFail) {
+          // RED-phase: test must fail before production code exists
+          if (exitCode !== 0) {
+            testStatus = 'ok';
+            testDetail = `RED confirmed — test fails (exit ${exitCode}). Implement now.`;
+          } else {
+            testStatus = 'fail';
+            testDetail = 'RED not confirmed — tests pass (exit 0) before any production code was written. The test is trivially green or the behavior already exists.';
+            testFix = 'Write a more specific test that exercises the new behavior. Check: is this FR already implemented?';
+          }
         } else if (exitCode !== 0) {
           testStatus = 'fail';
           const lines = combined.split(/\r?\n/).filter(Boolean);
@@ -1438,6 +1451,12 @@ const commands = {
         testFix = `Check testCommand in .spec-flow/config.json`;
       }
       checks.push(makeCheck('tests', testStatus, testDetail, testFix));
+    }
+    // RED-phase: skip implementation-phase checks (production code doesn't exist yet)
+    if (expectFail) {
+      ['coverage', 'forbidden-patterns', 'secret-scan'].forEach(n =>
+        checks.push(makeCheck(n, 'skipped', 'RED-phase — not applicable pre-implementation', null)));
+      return checks;
     }
 
     // ---- b. coverage ------------------------------------------------------
@@ -1623,7 +1642,7 @@ const commands = {
     // gate read as 'pass'. 'fail' on any failure (worst-wins across repos); else
     // 'pass' if at least one real check ran in any repo.
     const ran = summary.ok + summary.warn + summary.fail;
-    const gate = summary.fail > 0 ? 'fail' : (ran === 0 ? 'skipped' : 'pass');
+    const gate = summary.fail > 0 ? 'fail' : (ran === 0 ? 'skipped' : (expectFail ? 'red-confirmed' : 'pass'));
 
     return ok({ checks, summary, gate, repos: scopedRoots.map((r) => r.name).filter(Boolean), scope: scopeNote });
   },

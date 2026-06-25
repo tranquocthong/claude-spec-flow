@@ -2,6 +2,16 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.2] — 2026-06-25
+
+TDD RED-phase gate — enforce write-test-first with machine confirmation.
+
+- **`verify-code --expect fail`** (engine): new RED-phase mode. Runs `testCommand` and inverts pass/fail semantics — a failing test returns `gate: "red-confirmed"` (proceed to implement); a passing test returns `gate: "fail"` (test is trivially green, fix it first). All other checks (coverage, forbidden-patterns, secret-scan) are skipped in RED-phase (production code doesn't exist yet). No testCommand → `gate: "skipped"` (RED unconfirmable, not blocking).
+- **`hybrid-executor.md`**: TDD is now unconditional — step 3 is the RED phase (write test, run `verify-code --expect fail`, confirm `red-confirmed`) and step 4 is the GREEN phase (implement). Was conditional on `testCommand` being set and had no enforcement to actually run and see the test fail. Hard rule added: "Do NOT write production code before the test is confirmed failing."
+- **`phase.md`**: orchestrator now checks TDD evidence in the executor's return summary — feature tasks must mention test path + RED gate output; chore tasks must say "RED phase skipped".
+- **+3 tests** (`test/flow-tools.test.cjs`): RED confirmed (failing test), RED not confirmed (passing test), no testCommand. 74/74 pass.
+- Engine: bin +19 LOC (1854 → 1873). No other file changes.
+
 ## [0.5.1] — 2026-06-19
 
 Fix `config.language` bleeding into code.
