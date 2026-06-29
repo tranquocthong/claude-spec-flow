@@ -9,7 +9,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
  └─────────────────────  /sf:change  (you change your mind) ───────────
 ```
 
-> v0.5.4 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
+> v0.5.5 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
 
 ## What you get
 
@@ -56,6 +56,8 @@ node <path>/claude-spec-flow/bin/flow-tools.cjs sd-skeleton --srs <your-srs.md> 
 | An SRS too big for one SD (>25 FRs) | `/sf:split <srs.md>` |
 | Where am I? / is the install healthy? | `/sf:status` · `/sf:doctor` |
 | **Coming back** (new session) — pick up in-progress work | `/sf:status` — reads the disk and hands you the exact next step: open bugs/changes (`/sf:bug --resume <id>` · `/sf:change --resume <id>`), pending tasks (`/sf:phase`), or an **interrupted ingest** (the missing `sd-author` / `trace-build` step). Re-running `/sf:ingest` is safe — it skips done steps and won't clobber an authored SD. |
+| **Checklist filled** — run the tests | `/sf:manual-test <feature>` — smoke → regression → records `VERIFICATION.md` |
+| **Context running out** mid-task / stopping voluntarily | `/sf:checkpoint` — saves task/phase/done/next to disk; next session `/sf:status` shows the exact resume hint |
 
 ## Quickstart
 
@@ -268,7 +270,9 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | --- | --- | --- |
 | `/sf:init` | **One-time** project init — writes `.spec-flow/` committed profile (config, project-author, .gitignore) | flow |
 | `/sf:ingest <srs>` | SRS → SD draft (harvest + AI clean) + CONTEXT.md + trace + snapshot. Bare = interview mode | flow |
-| `/sf:checklist <feature>` | SD §13.2 Test Cases → manual-test `CHECKLIST.yaml` scaffold | flow |
+| `/sf:checklist <feature>` | SD §13.2 Test Cases → manual-test `CHECKLIST.yaml` scaffold (clobber-safe: won't overwrite a filled checklist without `--force`) | flow |
+| `/sf:manual-test <feature>` | Run `CHECKLIST.yaml` — smoke → regression → record `VERIFICATION.md`. Flags: `--smoke-only`, `--regression-only` | flow |
+| `/sf:checkpoint [feature]` | Save mid-task state (task / phase / done files / next action) when context is running low or stopping mid-task. `/sf:status` surfaces the checkpoint and overrides Next Step with a resume hint. Auto-cleared when task reaches `done` | utility |
 | `/sf:phase <feature>` | Adaptive implement loop (fast / expand / deep by complexity) | flow |
 | `/sf:resync <srs_v2>` | Flow 2 — propagate an SRS change as a surgical delta | flow |
 | `/sf:change "<desc>"` · `--resume <id>` | Flow 3 — dev fix/enhance loop, SD-first, until done. `--resume` continues an open change (id from `/sf:status`) | flow |
@@ -288,6 +292,8 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `sd-skeleton --srs --feature [--type] [--out]` | harvest SRS → SD skeleton (dirty, by design) |
 | `route --sd` | score each FR 1–10 → fast/expand/deep |
 | `checklist-gen --sd --feature [--type]` | SD §13.2 → CHECKLIST.yaml scaffold. **Design-type aware**: api/hybrid (or an SD with a §9 API section) → HTTP request/expect stub; library/internal/event-driven → `live-e2e`-tagged scaffold (no fake HTTP stub) |
+| `checkpoint-write --feature --task [--phase] [--done] [--next] [--decision]` | save mid-task state to `specs/<feature>/checkpoint.md` (overwrite, not append) |
+| `checkpoint-clear --feature` | remove `checkpoint.md` when task reaches done (no-op if absent) |
 | `checklist-status --feature [--file]` | classify each CHECKLIST test `filled` / `scaffold` (still has TODO stubs) / `no-verify` / `live-e2e` + a `ready` flag — know what's runnable without eyeballing the YAML |
 | `trace-link --task <id> --feature <f> [--fr <FR-id>] --files "p1,p2,..."` | record task→file (and FR→file / FR→task when `--fr` given) links into `.spec-flow/specs/<feature>/file-links.json` (per-feature; falls back to the active feature if `--feature` omitted); deduplicated, persistent across `trace-build` rebuilds |
 | `trace-build --sd [--feature] [--tasks]` | build the feature's trace; merges `file-links.json` → adds `nodes.files` + `task-file`/`fr-file`/**`fr-task`** links. Writes a **durable per-feature copy** at `specs/<feature>/trace.json` + an active-feature mirror at `.spec-flow/trace.json`. Warns on §12.2 codes that violate `conventions.errorCodePattern` |
@@ -378,7 +384,7 @@ spec-flow is branch-aware and **VCS-agnostic** (GitHub + GitLab). The policy liv
 **Plugin layout**
 ```
 .claude-plugin/   plugin.json, marketplace.json
-commands/         ingest · checklist · phase · resync · change · bug · init · doctor · status · split
+commands/         ingest · checklist · manual-test · checkpoint · phase · resync · change · bug · init · doctor · status · split
 skills/srs-to-sd/ entry-point skill (intent routing + gates)
 skills/manual-test/ bundled local-test harness (CHECKLIST.yaml, run-checklist.sh, ...)
 skills/commit/     bundled conventional-commit + push skill (VCS-agnostic, base-branch guard)
@@ -401,6 +407,7 @@ test/             *.test.cjs — flow-tools (CLI) · core · maintenance unit su
 - `.spec-flow/specs/<feature>/trace.json` — **durable per-feature** traceability matrix: SRS§ → SD§ → FR/TC/NFR → error → state → task → **source FILE**. Backbone of the change loops. `.spec-flow/trace.json` is an active-feature mirror of the last-built one.
 - `.spec-flow/snapshots/` — immutable SRS baselines frozen at each ingest/resync, for diffing (never hand-edit).
 - `.spec-flow/changes/` — dev fix/enhance loop audit trail · `.spec-flow/bugs/` — bug records (triage, resolution log, regression-test link).
+- `.spec-flow/specs/<feature>/checkpoint.md` — mid-task checkpoint (single overwritable file written by `/sf:checkpoint`; `/sf:status` surfaces it; auto-cleared when task reaches `done`).
 - `.spec-flow/STATE.md` — <100-line living index (resume after `/clear`) · `.spec-flow/VERIFICATION.md` — goal-backward verification, fed by manual-test results.
 - `CONTEXT.md` — locked decisions, fed to every agent.
 </details>
@@ -420,7 +427,7 @@ All dependencies are pinned — updates are deliberate and tested, never automat
 
 ## Status & known limits
 
-- Engine (23 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 67 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
+- Engine (25 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 80 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
 - **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8, now **per file**) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
 - **In active dogfooding** — used on real projects; fixes ship straight from live-use feedback (recent: per-feature durable trace, multi-repo verify-code scoping, design-type-aware checklist-gen, ID-prefix SRS harvest for non-English specs). Not yet a confident team-wide release.
 - SRS harvest is intentionally dirty; `sd-author` (AI) cleans it — don't judge the harvest output directly.
