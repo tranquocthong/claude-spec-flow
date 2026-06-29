@@ -23,6 +23,8 @@ Present a compact status block:
 | Feature | `{data.feature}` (or `(none)` if null) |
 | SD | If `data.sd`: `{data.sd.path}` with, if `data.trace` exists: `FR:{data.trace.fr} TC:{data.trace.tc} NFR:{data.trace.nfr} TODO:{data.sd.todos}` — else just TODO count. If null: `(none)` |
 | SRS snapshot | `{data.latestSnapshot}` or `(none)` |
+| Checkpoint | If `data.checkpoint`: `task: {data.checkpoint.task}` + phase if set + next if set — shown as a warning-style line so it stands out. If null: omit the row entirely. |
+| Checklist | If `data.checklist === 'ready'`: `ready — /sf:manual-test to run`; if starts with `scaffold`: `{data.checklist} — fill from SD then /sf:manual-test`; if `absent`: `(none) — /sf:checklist to generate`; if null: `(n/a)` |
 | Tasks | If `data.tasks`: `done:{data.tasks.done} wip:{data.tasks.inProgress} pending:{data.tasks.pending} review:{data.tasks.review} total:{data.tasks.total}` — else `(no tasks seeded)` |
 | Ready now | If `data.ready`: list each task as `#{id} "{title}"` — else `(none)` |
 | Verified | `passed` if `data.verified === true`; `not yet` if `false`; `(no run yet)` if null. If `data.verifiedGaps` is non-empty, append ` · {N} live gap(s)` |

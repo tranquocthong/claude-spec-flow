@@ -15,7 +15,7 @@ Generates `.spec-flow/specs/<feature>/CHECKLIST.yaml` — **co-located with the 
 The engine emits a **scaffold** — it cannot know endpoint paths or the right assertion shape. Those are filled in the next step, by **you (the agent), from the SD** — not by the user. SD approval was the only human gate; the user reviews your filled checklist, they do not hand-fill 153 TODOs.
 
 ## Steps
-1. `node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs checklist-gen --sd .spec-flow/specs/<feature>/SD.md --feature <feature>` — writes the scaffold.
+1. `node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs checklist-gen --sd .spec-flow/specs/<feature>/SD.md --feature <feature>` — writes the scaffold. **If a CHECKLIST.yaml already exists the engine returns `CHECKLIST_EXISTS` and stops** — pass `--force` only to deliberately regenerate from SD (this overwrites all filled assertions; only do it when §13.2 changed substantially via `/sf:resync` and the old checklist is no longer valid).
 2. **Fill every test from the SD yourself.** For each test: set `request` (method/path/token) from SD §9.2 / §8, then choose the assertion by feature type:
    - **read / transform** (e.g. masking, projection — no DB write): assert `expect.body` field(s) == the SD §13.2 Expected Result value. This IS a valid PASS; do NOT invent a `verify:` SQL block where nothing is persisted.
    - **mutation** (writes a row/event): delete the `body` stub and add a `verify:` SQL block asserting the real DB/Redis delta (SD §7.2 columns), per `test-rigor.md` MUST-2/3.
@@ -26,3 +26,5 @@ The engine emits a **scaffold** — it cannot know endpoint paths or the right a
 4. Run `scripts/lint-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml` (must pass: no TODO markers, every test has an assertion). Then present the filled checklist to the user for review before `/sf:phase`.
 
 > Deterministic scaffold (no subagent); the agent fills it from the SD.
+
+> **To run the checklist** (after it's filled): use `/sf:manual-test <feature>` — not this command.

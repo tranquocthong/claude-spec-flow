@@ -200,6 +200,9 @@ const commands = {
     const outPath = args.out || path.join(PATHS.specs, feature, 'CHECKLIST.yaml');
     const todoCount = (yaml.match(/TODO/g) || []).length;
     if (args['dry-run']) return ok({ feature, suites: s, tests: tc.rows.length, todo: todoCount, preview: yaml.slice(0, 900) + '\n...[truncated]' });
+    if (!args.force && fs.existsSync(outPath)) {
+      return err(`CHECKLIST_EXISTS: ${outPath} already exists — pass --force to regenerate (destructive: overwrites filled assertions). Use \`/sf:manual-test ${feature}\` to run the existing checklist.`);
+    }
     ensureDir(path.dirname(outPath));
     try { fs.writeFileSync(outPath, yaml); } catch (e) { return err(`WRITE_FAILED: ${e.message}`); }
     return ok({ feature, checklist: outPath, suites: s, tests: tc.rows.length, todo: todoCount });
@@ -252,6 +255,54 @@ const commands = {
   },
 
   // -----------------------------------------------------------------------
+  // -----------------------------------------------------------------------
+  // checkpoint-write  --feature <f> --task <id-or-title>
+  //                   [--phase <RED|GREEN|REFACTOR|CHECKLIST|VERIFY>]
+  //                   [--done <csv-of-files>] [--next <what-to-do>]
+  //                   [--decision <key-decisions>]
+  //
+  // Writes (overwrites) .spec-flow/specs/<feature>/checkpoint.md — a single
+  // file capturing mid-task state so a fresh agent can resume without re-deriving.
+  // Cleared by checkpoint-clear when task reaches done.
+  // -----------------------------------------------------------------------
+  'checkpoint-write'(args) {
+    const feature = args.feature;
+    if (!feature) return err('MISSING_ARG: --feature');
+    const task = args.task;
+    if (!task) return err('MISSING_ARG: --task (task id or title)');
+    const lines = [
+      `# Checkpoint — ${feature}`,
+      `task: ${task}`,
+      args.phase ? `phase: ${args.phase}` : '',
+      '',
+      '## Done this session',
+      args.done || '(none recorded)',
+      '',
+      '## Next',
+      args.next || '(see SD)',
+      '',
+    ];
+    if (args.decision) lines.push('## Decisions', args.decision, '');
+    const content = lines.join('\n') + '\n';
+    const outPath = path.join(PATHS.specs, feature, 'checkpoint.md');
+    ensureDir(path.dirname(outPath));
+    try { fs.writeFileSync(outPath, content); } catch (e) { return err(`WRITE_FAILED: ${e.message}`); }
+    return ok({ feature, checkpoint: outPath, task, phase: args.phase || null });
+  },
+
+  // -----------------------------------------------------------------------
+  // checkpoint-clear  --feature <f>
+  // Remove checkpoint.md after task reaches done.
+  // -----------------------------------------------------------------------
+  'checkpoint-clear'(args) {
+    const feature = args.feature;
+    if (!feature) return err('MISSING_ARG: --feature');
+    const p = path.join(PATHS.specs, feature, 'checkpoint.md');
+    if (!fs.existsSync(p)) return ok({ feature, cleared: false });
+    try { fs.unlinkSync(p); } catch (e) { return err(`DELETE_FAILED: ${e.message}`); }
+    return ok({ feature, cleared: true });
+  },
+
   // trace-link  --task <taskId> [--fr <FR-id>] --files "p1,p2,..."
   //
   // Append/dedupe entries into .spec-flow/file-links.json.
@@ -977,7 +1028,7 @@ const commands = {
         try { verified = /status:\s*passed/i.test(fs.readFileSync(verificationPath, 'utf8')); } catch {}
         nextStep = verified
           ? 'Done + verified — ship: stage, then `commit` skill (push).'
-          : `Done — regression: \`run-checklist ${featureName} --tag regression\` → \`verify-collect\`.`;
+          : `Done — \`/sf:manual-test ${featureName}\` (runs smoke + regression + records VERIFICATION).`;
       }
     }
 
@@ -1895,6 +1946,41 @@ const commands = {
     const bugsOpen   = bugsOpenList.length;
     const changesOpen = changesOpenList.length;
 
+    // Checkpoint — surface if mid-task context was saved
+    let checkpoint = null;
+    if (featureName) {
+      const cpPath = path.join(process.cwd(), PATHS.specs, featureName, 'checkpoint.md');
+      if (fs.existsSync(cpPath)) {
+        try {
+          const cpText = fs.readFileSync(cpPath, 'utf8');
+          const taskM = cpText.match(/^task:\s*(.+)$/m);
+          const phaseM = cpText.match(/^phase:\s*(.+)$/m);
+          const nextM = cpText.match(/^## Next\s*\n([\s\S]*?)(?=\n##|$)/m);
+          checkpoint = {
+            task: taskM ? taskM[1].trim() : '(unknown)',
+            phase: phaseM ? phaseM[1].trim() : null,
+            next: nextM ? nextM[1].trim().slice(0, 120) : null,
+          };
+        } catch {}
+      }
+    }
+
+    // Checklist status — quick scan without reusing checklist-status command to avoid coupling.
+    // Reports: absent | scaffold (N TODO) | ready | (n/a — no feature)
+    let checklistStatus = null; // null = no feature/SD context
+    const checklistPath = featureName ? path.join(process.cwd(), PATHS.specs, featureName, 'CHECKLIST.yaml') : null;
+    if (checklistPath) {
+      if (!fs.existsSync(checklistPath)) {
+        checklistStatus = 'absent';
+      } else {
+        try {
+          const clText = fs.readFileSync(checklistPath, 'utf8');
+          const clTodos = (clText.match(/\bTODO\b/g) || []).length;
+          checklistStatus = clTodos > 0 ? `scaffold (${clTodos} TODO)` : 'ready';
+        } catch { checklistStatus = 'unreadable'; }
+      }
+    }
+
     // Next Step (same decision ladder as state-update, read-only)
     let nextStep;
     if (!featureName || !sdExists) {
@@ -1902,11 +1988,12 @@ const commands = {
     } else if (sdTodos > 0) {
       nextStep = `SD has ${sdTodos} \`TODO:MANUAL-REVIEW\` — clear + approve, then \`/sf:checklist ${featureName}\`.`;
     } else {
-      const checklistPath = path.join(process.cwd(), PATHS.specs, featureName, 'CHECKLIST.yaml');
       if (!trace) {
         nextStep = `SD clean but no \`trace.json\` — ingest didn't finish: run \`trace-build --sd .spec-flow/specs/${featureName}/SD.md --feature ${featureName}\`.`;
-      } else if (!fs.existsSync(checklistPath)) {
+      } else if (checklistStatus === 'absent') {
         nextStep = `SD clean — \`/sf:checklist ${featureName}\`.`;
+      } else if (checklistStatus && checklistStatus.startsWith('scaffold')) {
+        nextStep = `Checklist has unfilled tests — fill from SD then \`/sf:phase ${featureName}\` (or \`/sf:manual-test ${featureName}\` if implementation is already done).`;
       } else if (taskCounts.total === 0) {
         nextStep = `\`/sf:phase ${featureName}\` — it seeds tasks (parse-prd, agent-run) then implements.`;
       } else if (taskCounts.pending + taskCounts.inProgress > 0) {
@@ -1917,8 +2004,14 @@ const commands = {
         const gapTail = verifiedGaps.length ? ` ${verifiedGaps.length} live gap(s) NOT verified live — confirm acceptable before merge.` : '';
         nextStep = verified
           ? `Done + verified — ship: stage, then \`commit\` skill (push).${gapTail}`
-          : `Done — run regression: \`run-checklist ${featureName} --tag regression\` → \`verify-collect\`.${gapTail}`;
+          : `Done — \`/sf:manual-test ${featureName}\` (runs smoke + regression + records VERIFICATION).${gapTail}`;
       }
+    }
+
+    // Checkpoint overrides nextStep when mid-task state was saved
+    if (checkpoint && taskCounts.inProgress > 0) {
+      const phasePart = checkpoint.phase ? ` [${checkpoint.phase}]` : '';
+      nextStep = `Resume checkpoint: task ${checkpoint.task}${phasePart} — read \`.spec-flow/specs/${featureName}/checkpoint.md\` then continue. Or \`/sf:phase ${featureName}\` to let it re-drive.`;
     }
 
     // In-flight resume hints take priority — surface started-but-open bug/change
@@ -1934,6 +2027,8 @@ const commands = {
       feature: featureName,
       sd: sdExists ? { path: sdPath, todos: sdTodos } : null,
       trace: trace ? { fr: frCount, tc: tcCount, nfr: nfrCount, links } : null,
+      checkpoint,
+      checklist: checklistStatus,
       tasks: taskCounts.total > 0 ? taskCounts : null,
       ready: ready.length > 0 ? ready : null,
       verified,

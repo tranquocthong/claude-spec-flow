@@ -72,9 +72,7 @@ def _send_request(req, ctx):
     # X-Timestamp / X-Signature) silently lose every custom header.
     for hk, hv in (req.get("headers") or {}).items():
         headers[hk] = vs.expand(str(hv))
-    body = req.get("body")
-    if isinstance(body, str):
-        body = vs.expand(body)
+    body = vs.expand_obj(req.get("body"))
     url = http.build_url(base, path, vs.expand_obj(req.get("query") or {}))
     status, jbody, raw = http.do_request(method, url, headers, body)
     return ("http", status, jbody, raw)

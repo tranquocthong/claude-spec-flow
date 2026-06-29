@@ -81,9 +81,9 @@ def _do_http(sb, ctx, dry_run):
     if tname and tname in ctx["tokens"]:
         k, v = ctx["tokens"][tname]
         headers[k] = v
-    body = h.get("body")
-    if isinstance(body, str):
-        body = vs.expand(body)
+    for hk, hv in (h.get("headers") or {}).items():
+        headers[hk] = vs.expand(str(hv))
+    body = vs.expand_obj(h.get("body"))
     ref = h.get("base_url_ref")
     base = (ctx.get("base_urls") or {}).get(ref) if ref else ctx["base_url"]
     if ref and not base:

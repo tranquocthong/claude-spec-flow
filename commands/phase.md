@@ -8,6 +8,8 @@ allowed-tools: Read, Write, Edit, Bash, Agent
 
 > **Re-anchor:** read `.spec-flow/STATE.md` (its **Next Step**) before acting; run `state-update` after each task so the flow survives long sessions.
 
+> **Checkpoint rule:** if you are mid-task and notice context is running deep (many tool calls, long session) or you must stop before finishing — run `/sf:checkpoint` before stopping. The next agent reads `.spec-flow/specs/<feature>/checkpoint.md` on resume. Clear it automatically in step 6 (`checkpoint-clear`). User can also trigger manually: `/sf:checkpoint`.
+
 > **HARD RULE — "done" means synced disk, NOT a prose claim.** `/sf:status` derives everything from disk (TM task statuses, STATE.md, VERIFICATION.md). Anything you don't write back is LOST next session — the user will open `/sf:status` and see "not implemented" even though you finished. So you may NOT tell the user a task/feature is done unless, on disk: (1) its TM task is `done` (not left in `review`), (2) `state-update` has run (STATE.md current), and (3) at phase end VERIFICATION reflects the result. **If you verified out-of-loop (ad-hoc / live E2E instead of `run-checklist`), you STILL MUST do (1)–(3) before reporting done** — confirming it works ≠ recording that it's done. A prose "done" with stale state is the failure mode this rule exists to stop.
 
 > **Task Master — CLI for AI ops, MCP for state ops.** Any AI-calling op (`parse-prd`,
@@ -130,7 +132,9 @@ Returns per-FR complexity scores (1–10):
    mcp__task-master-ai__set_task_status --id=<id> --status=done
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs state-update \
      --feature <feature> --note "task #<id> done"
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs checkpoint-clear --feature <feature>
    ```
+   The `checkpoint-clear` is a no-op if no checkpoint exists — always safe to run.
 
 6b. **Semantic drift-check (advisory, before next_task)**
    ```

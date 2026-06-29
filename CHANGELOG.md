@@ -2,6 +2,17 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.5] — 2026-06-30
+
+Add `/sf:manual-test`, `/sf:checkpoint`, checklist clobber guard, and clearer `/sf:status`.
+
+- **New command `/sf:manual-test <feature>`** — run the feature's `CHECKLIST.yaml` (smoke → regression) and record `VERIFICATION.md`. Flags: `--smoke-only`, `--regression-only`.
+- **New command `/sf:checkpoint [feature]`** — save mid-task state to disk when context is running low or stopping voluntarily. Writes `.spec-flow/specs/<feature>/checkpoint.md` (single overwritable file, not a log). Agent auto-triggers when mid-task and context is deep; user can also trigger manually. `/sf:status` surfaces the checkpoint and overrides Next Step with an exact resume hint. `checkpoint-clear` runs automatically in phase step 6 when task reaches `done`.
+- **Engine: `checkpoint-write` + `checkpoint-clear`** — two new commands (~45 LOC). `checkpoint-write` records task, phase, done files, next action, decisions. `checkpoint-clear` removes the file (no-op if absent).
+- **`checklist-gen` clobber guard** — returns `CHECKLIST_EXISTS` if `CHECKLIST.yaml` already exists. Pass `--force` to regenerate from SD (overwrites filled assertions).
+- **`/sf:status` enhancements** — new Checkpoint row (shown when mid-task state saved); new Checklist row (`absent` / `scaffold (N TODO)` / `ready`); Next Step now says `/sf:manual-test <feature>` instead of raw `run-checklist ... → verify-collect`.
+- Tests: 78 → 80.
+
 ## [0.5.4] — 2026-06-29
 
 Fix the #1 resume trap — `/sf:phase` re-seeding tasks from scratch in a new session.
