@@ -2,6 +2,13 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.4] — 2026-06-29
+
+Fix the #1 resume trap — `/sf:phase` re-seeding tasks from scratch in a new session.
+
+- **Bug: `/sf:phase` Step 0 re-ran `parse-prd` on an already-seeded feature after a session restart.** You seed tasks, exit, open a fresh session, run `/sf:phase` again — and it regenerates the task list from scratch (the user had to cancel and say "tasks already generated" before it noticed). Root cause: Step 0 decided "seeded?" via MCP `get_tasks` with a per-call `tag:`, but MCP state ops bind to the global `currentTag` and may ignore that param. In a fresh session `currentTag` still points at `master`/a prior feature → `get_tasks` returns the wrong tag's (empty) list → the agent concludes "not seeded" → destructively re-seeds.
+- **Fix (doc-only, no engine change):** Step 0 now detects seeded-state through the engine's `status-report --feature <feature>`, which reads `.taskmaster/tasks/tasks.json` scoped to the feature's own tag (currentTag-immune). Non-null `tasks` → already seeded → run `use-tag` and skip straight to Routing; never re-`parse-prd`. Bare `/sf:phase` (no feature arg) resolves the active feature from the same call.
+
 ## [0.5.3] — 2026-06-29
 
 Per-feature repo scope — stop multi-repo branching from fanning out to every service.

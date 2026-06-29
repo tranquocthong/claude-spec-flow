@@ -29,7 +29,18 @@ allowed-tools: Read, Write, Edit, Bash, Agent
 Tasks need **not** be pre-seeded — **Step 0 seeds them.** "Approve the SD" is all the user does; seeding + implementation are the agent's job.
 
 ## Step 0 — Seed tasks if not already seeded
-Check the feature's task space first (state op, no provider): `mcp__task-master-ai__get_tasks` with `tag: "<feature>"`. If it already has tasks → skip to Routing. If empty, **the agent seeds them itself** (do NOT hand this to the user) — CLI AI ops, same as every other AI op in this flow; the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing does not block it:
+
+> **FIRST detect seeded-state DETERMINISTICALLY — never re-seed an already-seeded feature.** This is the #1 resume trap: you seed tasks, exit, open a new session, run `/sf:phase` again, and it re-runs `parse-prd` from scratch. Root cause: do **NOT** decide this with MCP `mcp__task-master-ai__get_tasks` — it binds to the global `currentTag` (see the CRITICAL note below) and may ignore the per-call `tag:`, so in a **fresh session** (currentTag still `master`/a prior feature) it returns the wrong tag's tasks → you wrongly conclude "not seeded" → destructively re-`parse-prd`. Use the engine's tag-scoped count instead:
+
+```
+node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs status-report --feature <feature>
+```
+
+If `/sf:phase` was invoked with **no feature arg** (common on a fresh session), run `status-report` with no `--feature` first — it resolves the active feature (from the trace mirror, else the latest SD in `specs/`) and returns that feature's tag-scoped task counts in the same call; use the resolved `feature` for everything below. This reads `.taskmaster/tasks/tasks.json` scoped to **this feature's tag** (currentTag-immune). In the returned JSON:
+- **`tasks` non-null / total > 0 → ALREADY SEEDED.** Do **NOT** run `parse-prd`. Run `use-tag <feature>` (so MCP state ops bind to the right tag), then go straight to **Step 0.5 / Routing**. (`nextStep` will read "`/sf:phase` — N pending · M wip …".)
+- **`tasks` null / total 0 → NOT seeded.** Seed now (below). (`nextStep` will read "it seeds tasks (parse-prd) then implements.")
+
+When not seeded, **the agent seeds them itself** (do NOT hand this to the user) — CLI AI ops, same as every other AI op in this flow; the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing does not block it:
 ```
 npx -y -p task-master-ai@0.43.1 task-master parse-prd --input .spec-flow/specs/<feature>/SD.md --tag <feature>
 npx -y -p task-master-ai@0.43.1 task-master analyze-complexity --tag <feature> --research
