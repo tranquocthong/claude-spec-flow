@@ -36,7 +36,7 @@ If impact spans multiple nodes, or you're unsure, run the full steps below.
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs branch-ensure --kind change --id change-<NNN> --slug "<slug>" --type <fix|enhance>
    ```
-   Creates/switches `<type>/change-<NNN>-<slug>` when on the base branch (no-op if already on a work branch or `mode: off`).
+   Creates/switches `<type>/change-<NNN>-<slug>` when on the base branch (no-op if already on a work branch or `mode: off`). **Multi-repo (`config.repos` set):** append **`--repos "<service>,..."`** to scope the branch to the repos this change actually touches (else all configured repos branch). Unknown name → `REPO_NOT_CONFIGURED`.
 
 2. **Edit the SD spec**
    Update the relevant SD section, or spawn **sd-author** to propose a diff.

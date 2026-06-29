@@ -438,6 +438,41 @@ test('verify-code: --repos scopes the scan so an unrelated repo cannot poison th
   assert.match(scoped.data.scope, /scoped to \[svc-b\] via --repos/);
 });
 
+test('branch-ensure: --repos scopes branching so only the targeted repo branches', () => {
+  // Pre-fix bug: branch-ensure fanned out to ALL config.repos — creating stray
+  // feat/<feature> branches on unrelated services. --repos must narrow to the subset
+  // the feature actually targets; an unconfigured name must error, not misbranch.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-be-scope-'));
+  const hub = path.join(root, 'hub');
+  fs.mkdirSync(hub, { recursive: true });
+  const gitRepo = (name) => {
+    const d = path.join(root, name);
+    fs.mkdirSync(d, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: d });
+    execFileSync('git', ['config', 'user.email', 't@t.co'], { cwd: d });
+    execFileSync('git', ['config', 'user.name', 't'], { cwd: d });
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: d });
+    execFileSync('git', ['branch', '-M', 'main'], { cwd: d });
+    return d;
+  };
+  const aDir = gitRepo('svc-a');
+  const bDir = gitRepo('svc-b');
+  run(['init-project', '--stack', 'node', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
+  const branchOf = (d) => execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim();
+
+  // Scoped to svc-a → only svc-a leaves main; svc-b stays untouched.
+  const scoped = run(['branch-ensure', '--kind', 'sd', '--name', 'demo', '--repos', 'svc-a'], hub);
+  assert.equal(scoped.ok, true, 'branch-ensure ok');
+  assert.deepEqual(scoped.data.repos.map((r) => r.repo), ['svc-a'], 'only svc-a in results');
+  assert.equal(branchOf(aDir), 'feat/demo', 'svc-a branched');
+  assert.equal(branchOf(bDir), 'main', 'svc-b NOT branched (scoped out)');
+
+  // Unconfigured repo name → clear error, no misbranch.
+  const bad = run(['branch-ensure', '--kind', 'sd', '--name', 'demo', '--repos', 'wallet-ms'], hub);
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /REPO_NOT_CONFIGURED/, 'unknown --repos name errors instead of misbranching');
+});
+
 test('verify-code: --feature auto-scopes from the feature file-links repo prefixes', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-scopef-'));
   const hub = path.join(root, 'hub');

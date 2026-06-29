@@ -34,7 +34,7 @@ Then create the fix branch (per `config.json → branching`):
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs branch-ensure --kind bug --id <id> --slug "<short-desc>"
 ```
-Creates/switches `fix/<id>-<slug>` when on the base branch (no-op if already on a work branch or `mode: off`). Use the bug `id` from the previous step and a short slug from `$DESCRIPTION`.
+Creates/switches `fix/<id>-<slug>` when on the base branch (no-op if already on a work branch or `mode: off`). Use the bug `id` from the previous step and a short slug from `$DESCRIPTION`. **Multi-repo (`config.repos` set):** a bug usually lives in ONE service — append **`--repos "<service>"`** to branch only that repo (else it branches all of them). Unknown name → `REPO_NOT_CONFIGURED`, not a misbranch.
 
 ---
 

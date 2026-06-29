@@ -1213,7 +1213,7 @@ const commands = {
 
   // -----------------------------------------------------------------------
   // branch-ensure --kind sd|bug|change [--name <feature>] [--id <id>]
-  //               [--slug <slug>] [--type fix|enhance]
+  //               [--slug <slug>] [--type fix|enhance] [--repos "a,b"]
   // Deterministic branch policy for spec-flow lifecycle events.
   // Reads config.branching. Creates/switches a feature branch ONLY when the
   // current branch is the configured base — otherwise it is a safe no-op
@@ -1285,14 +1285,30 @@ const commands = {
     // Multi-repo: branch each code repo (one feat/<feature> per service → clean
     // PR-per-service). Single-repo: just cwd (backward compat, flat result shape).
     const roots = resolveRepos(cfg);
-    if (roots.length === 1 && !roots[0].name) {
-      const r = ensureIn(roots[0].root);
+
+    // Scope (multi-repo): a feature usually targets only SOME of config.repos. Without
+    // a filter, branching fans out to ALL — creating stray feat/<feature> branches on
+    // unrelated services and missing the one the feature actually targets. Narrow to
+    //   --repos "a,b"   → comma-separated repo NAMES (same name-filter semantics as
+    //                     verify-code's --repos; NOT the name=path form).
+    // No filter → all repos (full backward compat). Single-repo (name null) is always
+    // kept, so --repos on a single-repo project is a harmless no-op.
+    const repoFilter = (typeof args.repos === 'string' && args.repos.trim())
+      ? new Set(args.repos.split(',').map((s) => s.trim()).filter(Boolean)) : null;
+    const scopedRoots = repoFilter ? roots.filter((r) => !r.name || repoFilter.has(r.name)) : roots;
+    if (repoFilter && !scopedRoots.length) {
+      const known = roots.map((r) => r.name).filter(Boolean).join(', ') || '(none)';
+      return err(`REPO_NOT_CONFIGURED: --repos [${[...repoFilter].join(', ')}] matches no config.repos entry (known: ${known}). Add it to config.repos first.`);
+    }
+
+    if (scopedRoots.length === 1 && !scopedRoots[0].name) {
+      const r = ensureIn(scopedRoots[0].root);
       if (r.error === 'NO_COMMITS') return err('NO_COMMITS: git repo has no commits yet — make an initial commit before branching');
       if (r.error === 'NOT_A_GIT_REPO') return err('NOT_A_GIT_REPO');
       if (r.error) return err(r.error);
       return ok({ ...r, base, mode: branching.mode });
     }
-    const results = roots.map((rp) => ({ repo: rp.name, ...ensureIn(rp.root) }));
+    const results = scopedRoots.map((rp) => ({ repo: rp.name, ...ensureIn(rp.root) }));
     // Failures must speak: if EVERY repo errored, this is a hard failure (not ok:true
     // with errors buried in the array). If only some errored, stay ok but surface them.
     const errored = results.filter((r) => r.error);
