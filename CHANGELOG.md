@@ -2,6 +2,18 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.3] — 2026-06-29
+
+Per-feature repo scope — stop multi-repo branching from fanning out to every service.
+
+- **Bug: `branch-ensure` branched ALL `config.repos`.** A feature whose code lives in one sibling service (the "spec in hub, code in sibling repo" model) got stray `feat/<feature>` branches on unrelated services — and a feature targeting a repo absent from the list missed it entirely. The gate already self-scoped via file-links; branch-ensure had no escape hatch (and can't infer — it runs before any code exists).
+- **`branch-ensure --repos "a,b"`** (engine): comma-separated repo-name filter (same semantics as `verify-code --repos`). Narrows the fan-out; unknown name → `REPO_NOT_CONFIGURED` instead of a silent misbranch. No filter → all repos (back-compat); single-repo → harmless no-op.
+- **`trace-repos --feature <f> [--set "a,b" | --get]`** (engine): declares the repo subset a feature targets, stored as `trace.json.repos[]` — the single source of truth read at branch time (before file-links exist) and by the gate. Validates names ∈ `config.repos`.
+- **Precedence** — `branch-ensure`: `--repos` flag > declared `trace.json.repos` > all repos. `verify-code`: `--repos` > declared > file-links inference > all. Declared (intent) sits above file-links (evidence); a declared repo with zero file-links raises a `scopeWarnings` "forgotten work?" note (does not fail the gate).
+- **Commands**: `/sf:ingest` declares repos via `trace-repos` after `trace-build` (derived from SD "(service)" labels); `/sf:bug`, `/sf:change`, `/sf:phase` documented to scope branching. Two stale phase.md claims ("loops over all" / "EVERY config.repos") corrected.
+- **+4 tests** (`test/flow-tools.test.cjs`): `--repos` scoping + unknown-name error, trace-repos round-trip + validation, branch-ensure trace fallback, gate declared-precedence + zero-link warning. 51/51 pass in flow-tools suite.
+- Engine: bin +~70 LOC (1873 → 1961). Under the 3000 per-file cap.
+
 ## [0.5.2] — 2026-06-25
 
 TDD RED-phase gate — enforce write-test-first with machine confirmation.

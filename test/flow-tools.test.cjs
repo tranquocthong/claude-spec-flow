@@ -42,6 +42,19 @@ function initProject(dir) {
   return r;
 }
 
+/** Create a real git repo with one commit on `main` under root/name; return its path. */
+function makeGitRepo(root, name) {
+  const d = path.join(root, name);
+  fs.mkdirSync(d, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: d });
+  execFileSync('git', ['config', 'user.email', 't@t.co'], { cwd: d });
+  execFileSync('git', ['config', 'user.name', 't'], { cwd: d });
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: d });
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: d });
+  return d;
+}
+const branchOf = (d) => execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim();
+
 // ---------------------------------------------------------------------------
 // Dispatch / contract
 // ---------------------------------------------------------------------------
@@ -445,20 +458,9 @@ test('branch-ensure: --repos scopes branching so only the targeted repo branches
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-be-scope-'));
   const hub = path.join(root, 'hub');
   fs.mkdirSync(hub, { recursive: true });
-  const gitRepo = (name) => {
-    const d = path.join(root, name);
-    fs.mkdirSync(d, { recursive: true });
-    execFileSync('git', ['init', '-q'], { cwd: d });
-    execFileSync('git', ['config', 'user.email', 't@t.co'], { cwd: d });
-    execFileSync('git', ['config', 'user.name', 't'], { cwd: d });
-    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: d });
-    execFileSync('git', ['branch', '-M', 'main'], { cwd: d });
-    return d;
-  };
-  const aDir = gitRepo('svc-a');
-  const bDir = gitRepo('svc-b');
+  const aDir = makeGitRepo(root, 'svc-a');
+  const bDir = makeGitRepo(root, 'svc-b');
   run(['init-project', '--stack', 'node', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
-  const branchOf = (d) => execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: d, encoding: 'utf8' }).trim();
 
   // Scoped to svc-a → only svc-a leaves main; svc-b stays untouched.
   const scoped = run(['branch-ensure', '--kind', 'sd', '--name', 'demo', '--repos', 'svc-a'], hub);
@@ -501,6 +503,66 @@ test('multi-repo trace-link --repo qualifies the stored path', () => {
   assert.equal(r.ok, true);
   const links = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'file-links.json'), 'utf8'));
   assert.equal(links.links[0].file, 'svc-a/src/A.java', 'path is repo-qualified, not bare src/A.java');
+});
+
+// ---------------------------------------------------------------------------
+// Per-feature repo scope: trace.json.repos as the source of truth (Tầng 2)
+// ---------------------------------------------------------------------------
+
+test('trace-repos: --set persists the declared subset, --get round-trips, unknown name errors', () => {
+  const dir = tmpProject();
+  run(['init-project', '--stack', 'node', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], dir);
+  const set = run(['trace-repos', '--feature', 'demo', '--set', 'svc-b'], dir);
+  assert.equal(set.ok, true, 'set ok');
+  assert.deepEqual(set.data.repos, ['svc-b']);
+  const got = run(['trace-repos', '--feature', 'demo', '--get'], dir);
+  assert.deepEqual(got.data.repos, ['svc-b'], '--get round-trips the declared subset');
+  const bad = run(['trace-repos', '--feature', 'demo', '--set', 'wallet-ms'], dir);
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /REPO_NOT_CONFIGURED/, 'unknown repo name rejected on write');
+  const empty = run(['trace-repos', '--feature', 'undeclared', '--get'], dir);
+  assert.deepEqual(empty.data.repos, [], 'undeclared feature → []');
+});
+
+test('branch-ensure: falls back to the feature declared repos (trace-repos) when no --repos flag', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-be-trace-'));
+  const hub = path.join(root, 'hub');
+  fs.mkdirSync(hub, { recursive: true });
+  const aDir = makeGitRepo(root, 'svc-a');
+  const bDir = makeGitRepo(root, 'svc-b');
+  run(['init-project', '--stack', 'node', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
+  run(['trace-repos', '--feature', 'demo', '--set', 'svc-b'], hub);
+  // No --repos flag → must pick up the declared subset from trace.json.
+  const r = run(['branch-ensure', '--kind', 'sd', '--name', 'demo'], hub);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.data.repos.map((x) => x.repo), ['svc-b'], 'declared subset scoped branching');
+  assert.equal(branchOf(bDir), 'feat/demo', 'declared svc-b branched');
+  assert.equal(branchOf(aDir), 'main', 'undeclared svc-a NOT branched');
+});
+
+test('verify-code: declared repos (trace-repos) scope the gate above file-links + warn on zero-link', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-gate-decl-'));
+  const hub = path.join(root, 'hub');
+  fs.mkdirSync(path.join(root, 'svc-a', 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'svc-b', 'src'), { recursive: true });
+  fs.mkdirSync(hub, { recursive: true });
+  fs.writeFileSync(path.join(root, 'svc-a', 'src', 'A.java'), 'class A { void f(){ x.block(); } }\n'); // would fail
+  fs.writeFileSync(path.join(root, 'svc-b', 'src', 'B.java'), 'class B { void g(){ ok(); } }\n');
+  run(['init-project', '--stack', 'java-spring', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
+  const cfgPath = path.join(hub, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = null; cfg.verify.coverageCommand = null; cfg.verify.coverageThreshold = null;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  // File-links say svc-a; the feature DECLARES svc-b → declared must win, and the
+  // declared-but-unlinked svc-b must raise a forgotten-work warning.
+  run(['trace-link', '--task', '1', '--feature', 'demo', '--repo', 'svc-a', '--files', 'src/A.java'], hub);
+  run(['trace-repos', '--feature', 'demo', '--set', 'svc-b'], hub);
+  const r = run(['verify-code', '--feature', 'demo'], hub);
+  assert.equal(r.data.gate, 'pass', 'declared svc-b scopes out svc-a .block() — declared beats file-links');
+  assert.deepEqual(r.data.repos, ['svc-b'], 'only the declared repo scanned');
+  assert.match(r.data.scope, /declared/, 'scope note credits the declaration');
+  assert.ok(r.data.scopeWarnings && r.data.scopeWarnings.some((w) => /svc-b.*no file-links/.test(w)),
+    'declared repo with no file-links warns (forgotten work)');
 });
 
 // ---------------------------------------------------------------------------

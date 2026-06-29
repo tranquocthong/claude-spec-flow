@@ -10,7 +10,7 @@
  * Usage:  node flow-tools.cjs <command> [--key value ...]
  *
  * Commands: init, srs-snapshot, sd-skeleton, route, checklist-gen, trace-build, trace-impact,
- *           trace-link, srs-diff, state-update, verify-collect, verify-code, wave-plan,
+ *           trace-repos, trace-link, srs-diff, state-update, verify-collect, verify-code, wave-plan,
  *           epic-new, epic-list, bug-new, bug-list, branch-ensure,
  *           learn, doctor, status-report
  */
@@ -561,6 +561,50 @@ const commands = {
       linkCount: links.length,
       warnings,
     });
+  },
+
+  // -----------------------------------------------------------------------
+  // trace-repos  --feature <f>  [--set "a,b" | --get]
+  //
+  // Declare/read the repo subset a feature targets — the per-feature source of
+  // truth read by branch-ensure (at branch time, before any code exists, so the
+  // gate's file-links inference can't help) AND by verify-code (declared intent
+  // sits above file-links evidence). Stored as trace.json.repos[]. Each name is
+  // validated against config.repos keys (reuses REPO_NOT_CONFIGURED). Default
+  // action (no --set) is a read; single-repo / undeclared → returns [].
+  // -----------------------------------------------------------------------
+  'trace-repos'(args) {
+    const feature = args.feature;
+    if (!feature) return err('MISSING_ARG: --feature required');
+    const cfg = readJsonSafe(PATHS.config, null);
+    const known = cfg && cfg.repos && typeof cfg.repos === 'object' ? Object.keys(cfg.repos) : [];
+
+    // Read (default when --set is absent): return the declared subset.
+    if (typeof args.set !== 'string') {
+      const tr = readTrace(feature);
+      return ok({ feature, repos: (tr && Array.isArray(tr.repos)) ? tr.repos : [] });
+    }
+
+    // Write --set "a,b": validate names ∈ config.repos, then persist.
+    const names = args.set.split(',').map((s) => s.trim()).filter(Boolean);
+    if (known.length) {
+      const unknown = names.filter((n) => !known.includes(n));
+      if (unknown.length) return err(`REPO_NOT_CONFIGURED: [${unknown.join(', ')}] not in config.repos (known: ${known.join(', ') || '(none)'}).`);
+    }
+    const perFeaturePath = traceFileFor(feature);
+    // Load the existing per-feature trace, or start a minimal stub — a feature may
+    // declare its repos at intake (/sf:bug, /sf:change) before trace-build has run.
+    let tr = fs.existsSync(perFeaturePath) ? readJsonSafe(perFeaturePath, null) : null;
+    if (!tr) tr = { feature };
+    tr.repos = names;
+    try {
+      ensureDir(path.join(PATHS.specs, feature));
+      fs.writeFileSync(perFeaturePath, JSON.stringify(tr, null, 2));
+      // Keep the active-feature global mirror in sync when it points at this feature.
+      const g = readJsonSafe(PATHS.trace, null);
+      if (g && g.feature === feature) { g.repos = names; fs.writeFileSync(PATHS.trace, JSON.stringify(g, null, 2)); }
+    } catch (e) { return err(`WRITE_FAILED: ${e.message}`); }
+    return ok({ feature, repos: names, path: perFeaturePath });
   },
 
   // -----------------------------------------------------------------------
@@ -1288,17 +1332,28 @@ const commands = {
 
     // Scope (multi-repo): a feature usually targets only SOME of config.repos. Without
     // a filter, branching fans out to ALL — creating stray feat/<feature> branches on
-    // unrelated services and missing the one the feature actually targets. Narrow to
-    //   --repos "a,b"   → comma-separated repo NAMES (same name-filter semantics as
-    //                     verify-code's --repos; NOT the name=path form).
-    // No filter → all repos (full backward compat). Single-repo (name null) is always
-    // kept, so --repos on a single-repo project is a harmless no-op.
-    const repoFilter = (typeof args.repos === 'string' && args.repos.trim())
+    // unrelated services and missing the one the feature actually targets. Resolve a
+    // filter from (highest precedence first):
+    //   1. --repos "a,b"  → comma-separated repo NAMES (same name-filter semantics as
+    //                       verify-code's --repos; NOT the name=path form).
+    //   2. the feature's declared repo subset (trace.json.repos, set via trace-repos) —
+    //      the only signal available at branch time, before any code/file-links exist.
+    // No filter at all → all repos (full backward compat). Single-repo (name null) is
+    // always kept, so a filter on a single-repo project is a harmless no-op.
+    let repoFilter = (typeof args.repos === 'string' && args.repos.trim())
       ? new Set(args.repos.split(',').map((s) => s.trim()).filter(Boolean)) : null;
+    let filterSource = repoFilter ? '--repos' : null;
+    if (!repoFilter) {
+      const feat = args.feature || (kind === 'sd' ? args.name : null) || (readJsonSafe(PATHS.trace, null) || {}).feature || null;
+      if (feat) {
+        const tr = readTrace(feat);
+        if (tr && Array.isArray(tr.repos) && tr.repos.length) { repoFilter = new Set(tr.repos); filterSource = `feature ${feat}`; }
+      }
+    }
     const scopedRoots = repoFilter ? roots.filter((r) => !r.name || repoFilter.has(r.name)) : roots;
     if (repoFilter && !scopedRoots.length) {
       const known = roots.map((r) => r.name).filter(Boolean).join(', ') || '(none)';
-      return err(`REPO_NOT_CONFIGURED: --repos [${[...repoFilter].join(', ')}] matches no config.repos entry (known: ${known}). Add it to config.repos first.`);
+      return err(`REPO_NOT_CONFIGURED: [${[...repoFilter].join(', ')}] (via ${filterSource}) matches no config.repos entry (known: ${known}). Add it to config.repos first.`);
     }
 
     if (scopedRoots.length === 1 && !scopedRoots[0].name) {
@@ -1378,16 +1433,25 @@ const commands = {
 
     // Scope (multi-repo): a change usually touches only SOME of config.repos, but the
     // gate is worst-wins across all of them — so an unrelated repo's red WIP poisons a
-    // clean feature's gate. Narrow to the repos the feature actually wrote to:
-    //   --repos "a,b"  → explicit filter, OR
-    //   --feature X    → auto from X's file-links.json repo prefixes (trace-link --repo).
+    // clean feature's gate. Narrow to the repos the feature targets, by precedence:
+    //   1. --repos "a,b"  → explicit filter.
+    //   2. trace.json.repos (declared via trace-repos) → stated intent.
+    //   3. --feature X    → auto from X's file-links.json repo prefixes (evidence).
     // No filter, single-repo (name null), or no match → scan all (full backward compat).
     let scopedRoots = roots;
     let scopeNote = null;
+    const scopeWarnings = [];
     const explicitRepos = (typeof args.repos === 'string' && args.repos.trim())
       ? new Set(args.repos.split(',').map(s => s.trim()).filter(Boolean)) : null;
-    let touchedRepos = null;
     const vcFeature = args.feature || (readJsonSafe(PATHS.trace, null) || {}).feature || null;
+    // Declared subset (intent stated up front, ABOVE file-links evidence).
+    let declaredRepos = null;
+    if (!explicitRepos && vcFeature) {
+      const tr = readTrace(vcFeature);
+      if (tr && Array.isArray(tr.repos) && tr.repos.length) declaredRepos = new Set(tr.repos);
+    }
+    // File-links inference (what the feature actually wrote to).
+    let touchedRepos = null;
     if (!explicitRepos && vcFeature) {
       const flPath = fileLinksPathFor(vcFeature);
       if (fs.existsSync(flPath)) {
@@ -1397,12 +1461,18 @@ const commands = {
         if (seen.size) touchedRepos = seen;
       }
     }
-    const repoFilter = explicitRepos || touchedRepos;
+    // Consistency cross-check: a declared repo with zero file-links → possibly forgotten
+    // work. Surfaces drift; does NOT fail the gate.
+    if (declaredRepos && touchedRepos) {
+      for (const r of declaredRepos) if (!touchedRepos.has(r)) scopeWarnings.push(`declared repo "${r}" has no file-links yet — forgotten work?`);
+    }
+    const repoFilter = explicitRepos || declaredRepos || touchedRepos;
+    const filterVia = explicitRepos ? '--repos' : declaredRepos ? `feature ${vcFeature} (declared)` : `feature ${vcFeature} (file-links)`;
     if (repoFilter) {
       const narrowed = roots.filter(r => !r.name || repoFilter.has(r.name));
       if (narrowed.length) {
         scopedRoots = narrowed;
-        scopeNote = `scoped to [${[...repoFilter].join(', ')}] via ${explicitRepos ? '--repos' : `feature ${vcFeature}`}`;
+        scopeNote = `scoped to [${[...repoFilter].join(', ')}] via ${filterVia}`;
       }
     }
 
@@ -1660,7 +1730,9 @@ const commands = {
     const ran = summary.ok + summary.warn + summary.fail;
     const gate = summary.fail > 0 ? 'fail' : (ran === 0 ? 'skipped' : (expectFail ? 'red-confirmed' : 'pass'));
 
-    return ok({ checks, summary, gate, repos: scopedRoots.map((r) => r.name).filter(Boolean), scope: scopeNote });
+    const result = { checks, summary, gate, repos: scopedRoots.map((r) => r.name).filter(Boolean), scope: scopeNote };
+    if (scopeWarnings.length) result.scopeWarnings = scopeWarnings;
+    return ok(result);
   },
 
   // -----------------------------------------------------------------------

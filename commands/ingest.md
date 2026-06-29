@@ -88,6 +88,12 @@ With a file path given, skip Mode 0 and go straight to the Steps.
    ```
    Writes `.spec-flow/trace.json`: nodes (FR, TC, errors, states) + links (fr-tc, src-fr, fr-task). **Check `data.warnings`** — if `conventions.errorCodePattern` is set and any §12.2 code violates it, the warning lists the offending codes; surface it and fix the SD codes to the project's standard before the gate.
 
+   **Multi-repo (`config.repos` set) — declare which repos this feature targets.** The SD labels every component/FR by service ("(auth-svc)", "(billing-svc)"). Collect the distinct services and record them as the feature's repo scope:
+   ```
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-repos --feature <feature> --set "auth-svc,billing-svc"
+   ```
+   This is the single source of truth read by both `branch-ensure` (so a later re-branch / `/sf:bug` / `/sf:change` scopes automatically, no `--repos` flag needed) and `verify-code` (declared intent scopes the gate above file-links). Skip on single-repo projects. If you scoped the early STEP 2 branch with `--repos`, declare the same set here so it persists.
+
 7. **Update state**
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs state-update \
@@ -114,6 +120,6 @@ With a file path given, skip Mode 0 and go straight to the Steps.
 
 ## Pipeline recap
 ```
-srs-snapshot → sd-skeleton (harvest) → sd-author (clean) → trace-build → state-update
+srs-snapshot → sd-skeleton (harvest) → sd-author (clean) → trace-build → trace-repos (multi-repo) → state-update
 ```
 No `parse_prd` until SD has zero `TODO:MANUAL-REVIEW`.
