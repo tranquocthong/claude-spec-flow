@@ -40,6 +40,8 @@ Creates/switches `fix/<id>-<slug>` when on the base branch (no-op if already on 
 
 ## STEP 2 — REPRO-FIRST (write the failing test BEFORE fixing)
 
+> **Pick the test level (TDD inner loop — optional, recommended).** If the bug is **isolable in code** (a wrong branch / off-by-one / mapping deep in one function), also write a **failing unit test** in the project's native harness (JUnit / Jest / pytest / go test / …) as a fast RED loop — it pinpoints and runs in ms. This is *recommended, not required*, and it does **not** replace the CHECKLIST entry. **The durable, stack-agnostic regression anchor is always the `CHECKLIST.yaml` entry below** — that is what `/sf:status` and the regression suite track. Cross-boundary bugs (response shape, masking, config, event flow) → CHECKLIST blackbox is enough on its own.
+
 Using the **manual-test** skill (`skills/manual-test`):
 
 1. Add an entry to `CHECKLIST.yaml` (`.spec-flow/specs/<feature>/CHECKLIST.yaml`):
@@ -99,11 +101,12 @@ Spawn **hybrid-executor** with:
 > "Fix the code to MATCH SD section `<ref>`. Do NOT change the SD.
 >  Bug: `<id>` — `<description>`.
 >  Failing repro test: `<bug-id>` in `CHECKLIST.yaml`.
->  Impacted nodes: `<impacted FR/TC from trace-impact>`."
+>  Impacted nodes: `<impacted FR/TC from trace-impact>`.
+>  TDD (if a unit harness exists for this stack): drive the fix RED→GREEN — write/keep a failing unit test for the buggy unit, make it pass with the **minimal** change, then **REFACTOR**: clean the diff without altering behavior. Touch no behavior outside the bug. If there is no unit harness, fix to green against the repro test only."
 
-**No SD?** Substitute the contract: replace "MATCH SD section `<ref>`" with "match the **expected behavior** in the bug report (expected/actual) + the failing repro test"; drop the "Impacted nodes" line. Everything else (do-not-touch-other-behavior, minimal diff) stays.
+**No SD?** Substitute the contract: replace "MATCH SD section `<ref>`" with "match the **expected behavior** in the bug report (expected/actual) + the failing repro test"; drop the "Impacted nodes" line. Everything else (do-not-touch-other-behavior, minimal diff, RED→GREEN→REFACTOR) stays.
 
-Log the fix attempt in "## Resolution log:" with a timestamp and summary of changes.
+Log the fix attempt in "## Resolution log:" with a timestamp and summary of changes (note RED→GREEN→REFACTOR if a unit test was used).
 
 ---
 
@@ -159,7 +162,7 @@ scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag regress
 STEP 1  INTAKE       flow-tools bug-new → .spec-flow/bugs/<NNN>-bug-<slug>.md
      │
      ▼
-STEP 2  REPRO-FIRST  add CHECKLIST entry → run → confirm FAILS
+STEP 2  REPRO-FIRST  add CHECKLIST entry (+ optional unit RED) → run → confirm FAILS
      │
      ▼
 STEP 3  TRIAGE       trace-impact → SD section → decide type
@@ -170,7 +173,7 @@ STEP 3  TRIAGE       trace-impact → SD section → decide type
      └─ code-bug (SD correct)
           │
           ▼
-     STEP 4a  CODE-FIX  hybrid-executor (code only, SD untouched)
+     STEP 4a  CODE-FIX  hybrid-executor (code only, SD untouched; RED→GREEN→REFACTOR if unit harness)
           │
           ▼
      STEP 5   VERIFY     run repro test → must PASS; if FAIL → loop 4a
