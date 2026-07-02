@@ -1218,3 +1218,82 @@ test('wave-plan: returns ready set from tasks.json respecting dependencies', () 
   assert.ok(readyIds.includes(4), 'task 4 in ready set');
   assert.ok(!readyIds.includes(3), 'task 3 not in ready set (blocked)');
 });
+
+// ---------------------------------------------------------------------------
+// srs-diff prose fallback + trace-impact srs-diff-shape ingestion (0.5.6)
+// ---------------------------------------------------------------------------
+
+test('srs-diff prose fallback: anchor-free SRS revision is NOT an empty changeset', () => {
+  // Pre-fix: an SRS written as prose bullets (no US-/BL-/NFR anchors) parsed to
+  // empty structures on BOTH sides, so any revision diffed 0/0/0 and the resync
+  // guard mis-routed a genuine edit to "wrong input". Now the prose layer sees it.
+  const dir = tmpProject();
+  initProject(dir);
+  const srs = path.join(dir, '.spec-flow', 'srs', 'prosy.md');
+  fs.mkdirSync(path.dirname(srs), { recursive: true });
+  fs.writeFileSync(srs, [
+    '# SRS — Prosy', '',
+    '## 5. Functional Requirements',
+    '- The system MUST expose balance via GetBalance.',
+    '- The system MUST support top-up via InitCheckout.', '',
+  ].join('\n'));
+  const snap = run(['srs-snapshot', '--srs', srs, '--feature', 'prosy'], dir);
+  assert.equal(snap.ok, true);
+
+  // Identical → still empty (both layers quiet)
+  const same = run(['srs-diff', '--new', srs, '--feature', 'prosy'], dir);
+  assert.equal(same.ok, true);
+  assert.equal(same.data.emptyChangeset, true, 'identical prose doc stays empty');
+  assert.deepEqual(same.data.anchors, { old: 0, new: 0 }, 'diagnostics show anchor-free doc');
+
+  // Real prose edit: one bullet changed, one added
+  fs.writeFileSync(srs, [
+    '# SRS — Prosy', '',
+    '## 5. Functional Requirements',
+    '- The system MUST expose balance via the WalletService facade.',
+    '- The system MUST support top-up via InitCheckout.',
+    '- The system MUST reject withdraw without payout wallet id.', '',
+  ].join('\n'));
+  const changed = run(['srs-diff', '--new', srs, '--feature', 'prosy'], dir);
+  assert.equal(changed.ok, true);
+  assert.equal(changed.data.counts.added + changed.data.counts.changed + changed.data.counts.removed, 0,
+    'anchor layer still sees nothing');
+  assert.equal(changed.data.emptyChangeset, false, 'prose layer rescues the revision from the empty-gate');
+  assert.equal(changed.data.proseCounts.added, 2, 'changed bullet + new bullet surface as prose added');
+  assert.equal(changed.data.proseCounts.removed, 1, 'old wording surfaces as prose removed');
+  assert.match(changed.data.hint, /prose-level diff found/i, 'hint explains parser-blind vs no-change');
+  assert.ok(changed.data.proseSections.some(s => /functional requirements/i.test(s)), 'section attributed');
+});
+
+test('trace-impact: accepts srs-diff output shape directly and harvests ids from changed text', () => {
+  // Pre-fix: resync.md pipes srs-diff output into trace-impact --changeset, but
+  // trace-impact only understood {ids, keywords} — the documented pipeline seeded
+  // nothing, silently. Now the srs-diff shape ({changeset,prose}) is a first-class input.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns JWT | Must Have | US-1 |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid creds login | JWT 200 | FR-001 |', '',
+  ].join('\n'));
+  const tb = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(tb.ok, true);
+
+  const csFile = path.join(dir, 'cs.json');
+  fs.writeFileSync(csFile, JSON.stringify({
+    changeset: { added: [], changed: [], removed: [] },
+    prose: { added: [{ kind: 'prose', section: '5. FR', text: 'Login (FR-001) must also rotate refresh token.' }], removed: [] },
+  }));
+  const r = run(['trace-impact', '--feature', 'demo', '--changeset', csFile], dir);
+  assert.equal(r.ok, true, 'trace-impact ok');
+  assert.ok(r.data.impacted.fr.includes('FR-001'), 'FR-001 harvested from prose entry text');
+  assert.ok(r.data.impacted.tc.includes('TC-001'), 'transitive fr-tc walk still applies');
+});

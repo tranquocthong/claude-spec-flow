@@ -161,3 +161,22 @@ test('genSd: epic-scale flag trips past the FR threshold', () => {
   assert.ok(stats.epicScale, 'epicScale set');
   assert.ok(warnings.some((w) => /EPIC-SCALE/.test(w)));
 });
+
+test('parseProseBullets: groups bullets by nearest heading, skips tables and noise', () => {
+  const md = [
+    '# SRS — X', '',
+    'intro prose no bullet', '',
+    '## 5. Functional Requirements',
+    '- The system MUST do A.',
+    '1. The system MUST do B.',
+    '| col | col2 |', '| --- | --- |', '| - not a bullet | x |',
+    '- ok', // <4 chars after normalize? "ok" length 2 → skipped
+    '## 6. Business Rules',
+    '* BR: never do C.',
+  ].join('\n');
+  const m = core.parseProseBullets(md);
+  const fr = m.get('5. Functional Requirements');
+  assert.deepEqual(fr, ['The system MUST do A.', 'The system MUST do B.']);
+  const br = m.get('6. Business Rules');
+  assert.deepEqual(br, ['BR: never do C.']);
+});

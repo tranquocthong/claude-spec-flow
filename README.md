@@ -9,7 +9,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
  └─────────────────────  /sf:change  (you change your mind) ───────────
 ```
 
-> v0.5.5 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
+> v0.5.6 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
 
 ## What you get
 
@@ -427,7 +427,7 @@ All dependencies are pinned — updates are deliberate and tested, never automat
 
 ## Status & known limits
 
-- Engine (25 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 80 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
+- Engine (25 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 83 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
 - **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8, now **per file**) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
 - **In active dogfooding** — used on real projects; fixes ship straight from live-use feedback (recent: per-feature durable trace, multi-repo verify-code scoping, design-type-aware checklist-gen, ID-prefix SRS harvest for non-English specs). Not yet a confident team-wide release.
 - SRS harvest is intentionally dirty; `sd-author` (AI) cleans it — don't judge the harvest output directly.

@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, TODO, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
+  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
 } = require('../lib/core.cjs');
 const maintenance = require('../lib/maintenance.cjs');
 const drift = require('../lib/drift.cjs');
@@ -693,6 +693,30 @@ const commands = {
       if (kws.length) {
         args._keywords = kws.join(',');
       }
+      // Also accept srs-diff output directly: the full Result data ({ changeset, prose })
+      // or the bare { added, changed, removed } object. Pre-fix this shape was silently
+      // ignored (0 seeds) even though resync.md pipes srs-diff into trace-impact.
+      const entries = [];
+      const csRoot = (cs.changeset && typeof cs.changeset === 'object') ? cs.changeset : cs;
+      for (const k of ['added', 'changed', 'removed']) {
+        if (Array.isArray(csRoot[k])) entries.push(...csRoot[k]);
+      }
+      const proseRoot = cs.prose || csRoot.prose;
+      if (proseRoot && typeof proseRoot === 'object') {
+        for (const k of ['added', 'removed']) {
+          if (Array.isArray(proseRoot[k])) entries.push(...proseRoot[k]);
+        }
+      }
+      for (const e of entries) {
+        if (!e || typeof e !== 'object') continue;
+        if (e.id) seedIds.add(String(e.id).trim());
+        // Harvest anchored ids mentioned inside the changed text itself
+        const hay = [e.text, e.oldText, e.name,
+          Array.isArray(e.row) ? e.row.join(' ') : '',
+          Array.isArray(e.oldRow) ? e.oldRow.join(' ') : ''].join(' ');
+        for (const m of hay.match(/\b(?:FR|TC|US|NFR|AC|BR)-\d+\b/gi) || []) seedIds.add(m.toUpperCase());
+        for (const m of hay.match(/\bERR_[A-Z0-9_]+\b/g) || []) seedIds.add(m);
+      }
     }
 
     if (args.ids) {
@@ -870,16 +894,47 @@ const commands = {
 
     const changeset = { added, changed, removed };
     const counts = { added: added.length, changed: changed.length, removed: removed.length };
-    // 0/0/0 against the latest snapshot is a strong signal the input is NOT a revision
-    // of the tracked SRS (wrong doc / a new feature). resync.md gates on this rather
-    // than silently running the whole pipeline as a no-op.
-    const empty = counts.added + counts.changed + counts.removed === 0;
+    const anchorEmpty = counts.added + counts.changed + counts.removed === 0;
+
+    // Prose fallback — an SRS written as prose bullets (no US-/anchored-id rows, no
+    // keyword tables) is invisible to the anchor diff above, so a heavily-edited
+    // revision would read 0/0/0 ("parser-blind", NOT "no change"). Diff bullets per
+    // section so a real revision never reads as an empty changeset.
+    const oldProse = parseProseBullets(oldMd);
+    const newProse = parseProseBullets(newMd);
+    const proseAdded = [], proseRemoved = [];
+    const allTitles = new Set([...oldProse.keys(), ...newProse.keys()]);
+    for (const title of allTitles) {
+      const o = oldProse.get(title) || [], n = newProse.get(title) || [];
+      const oSet = new Set(o.map(norm)), nSet = new Set(n.map(norm));
+      for (const b of n) if (!oSet.has(norm(b))) proseAdded.push({ kind: 'prose', section: title, text: b.slice(0, 240) });
+      for (const b of o) if (!nSet.has(norm(b))) proseRemoved.push({ kind: 'prose', section: title, text: b.slice(0, 240) });
+    }
+    const prose = { added: proseAdded, removed: proseRemoved };
+    const proseCounts = { added: proseAdded.length, removed: proseRemoved.length };
+    const proseEmpty = proseCounts.added + proseCounts.removed === 0;
+    const proseSections = [...new Set([...proseAdded, ...proseRemoved].map(e => e.section))];
+
+    // Diagnostics: how many anchor-diffable items each side actually had. old=0 AND
+    // new=0 means the anchor diff never stood a chance — its 0/0/0 says nothing.
+    const rowsOf = (t) => (t && t.rows) ? t.rows.length : 0;
+    const anchorCount = (s) => (s.stories || []).length + rowsOf(s.nfr) + rowsOf(s.businessLogic) + rowsOf(s.stateTable);
+    const anchors = { old: anchorCount(oldSrs), new: anchorCount(newSrs) };
+
+    // emptyChangeset is the resync wrong-input gate: only true when BOTH layers saw
+    // nothing. Anchor-empty + prose-changes = a genuine revision of an anchor-free SRS.
+    const empty = anchorEmpty && proseEmpty;
+    const hint = empty
+      ? `0 changes vs snapshot "${path.basename(oldPath)}" — this doc may not be a revision of the tracked feature. If it's a new/different feature use /sf:ingest; for a spec tweak use /sf:change. Only continue resync if you expected an empty delta.`
+      : (anchorEmpty && !proseEmpty)
+        ? `anchor-level diff found nothing (diffable anchors: old=${anchors.old}, new=${anchors.new}) but prose-level diff found ${proseCounts.added} added / ${proseCounts.removed} removed bullet(s) in section(s): ${proseSections.slice(0, 6).join(' · ')}. This IS a revision — feed data.prose to sd-author; trace-impact accepts this result file directly via --changeset (it harvests FR-/TC-/ERR_ ids mentioned in the changed text).`
+        : null;
     return ok({
       changeset, counts,
+      prose, proseCounts, proseSections,
+      anchors,
       emptyChangeset: empty,
-      hint: empty
-        ? `0 changes vs snapshot "${path.basename(oldPath)}" — this doc may not be a revision of the tracked feature. If it's a new/different feature use /sf:ingest; for a spec tweak use /sf:change. Only continue resync if you expected an empty delta.`
-        : null,
+      hint,
       note: 'best-effort: SRS is free-form; treat as hint for sd-author. The SD is the authoritative controlled artifact.',
     });
   },

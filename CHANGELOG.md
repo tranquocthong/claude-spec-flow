@@ -2,6 +2,17 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.6] — 2026-07-02
+
+Close the prose-SRS blind spot in resync: `srs-diff` gets a prose-level fallback layer, and `trace-impact` finally understands `srs-diff`'s own output.
+
+- **Bug: `srs-diff` returned a deceptive 0/0/0 for real revisions of prose-form SRS.** The anchor diff only compares user stories (US-id) and NFR/BL/state table rows. An SRS written as prose bullets (`- Hệ thống PHẢI ...`) parses to empty structures on BOTH sides → any revision, however large, diffed 0/0/0 → the resync wrong-input guard mis-routed a genuine edit to "not a revision". Hit in production on openproxy (9 prose SRS; an 11-bullet revision read as empty).
+- **Fix: prose fallback layer.** New `parseProseBullets()` in core (bullets/numbered items grouped by nearest heading, table rows excluded) + `srs-diff` now always computes a per-section bullet set-diff. Output adds `prose {added, removed}` (entries `{kind:'prose', section, text}`), `proseCounts`, `proseSections`, and `anchors {old, new}` diagnostics. `emptyChangeset` is now true only when BOTH layers see nothing; a dedicated hint distinguishes **parser-blind** (anchor 0/0/0 + prose changes → "this IS a revision, feed data.prose to sd-author") from **genuinely empty** (wrong-input routing unchanged).
+- **Bug: the documented `srs-diff → trace-impact --changeset` pipe never seeded anything.** `trace-impact` only understood `{ids, keywords}` or a flat array; `srs-diff`'s `{changeset:{added,changed,removed}}` shape was silently ignored (0 seeds, empty impact — a no-op that looked like success).
+- **Fix: `trace-impact` accepts the srs-diff result file directly** — full `{changeset, prose}` data or bare `{added, changed, removed}`. Harvests `entry.id` plus any `FR-/TC-/US-/NFR-/AC-/BR-\d+` and `ERR_*` ids mentioned inside the changed text (`text`, `oldText`, `row`, `oldRow`), then walks the trace transitively as before. `{ids, keywords}` inputs unchanged.
+- **`commands/resync.md`** — step-1 guard rewritten: three cases (empty / anchor-blind / anchored) with explicit routing; step-2 notes the result file is directly consumable.
+- Tests: 80 → 83 (prose-fallback rescue + identical-doc stays empty; srs-diff-shape ingestion with transitive walk; `parseProseBullets` unit).
+
 ## [0.5.5] — 2026-06-30
 
 Add `/sf:manual-test`, `/sf:checkpoint`, checklist clobber guard, and clearer `/sf:status`.

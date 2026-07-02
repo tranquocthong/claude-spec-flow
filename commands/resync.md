@@ -20,9 +20,11 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs srs-diff --new <srs_v2.md>
    ```
-   Auto-resolves the latest snapshot (or `--old <snapshot.md>` for a specific version). Outputs CHANGESET `{ added, changed, removed }` keyed by SRS anchors (US, AC, NFR, BL, state). Treat as a hint for sd-author; SD remains the authoritative artifact.
+   Auto-resolves the latest snapshot (or `--old <snapshot.md>` for a specific version). Outputs two layers: CHANGESET `{ added, changed, removed }` keyed by SRS anchors (US, AC, NFR, BL, state) **plus `data.prose` `{ added, removed }`** — a per-section bullet diff that catches revisions in anchor-free prose SRS (where the anchor layer is blind; `data.anchors {old,new}` tells you how blind). Treat both as hints for sd-author; SD remains the authoritative artifact.
 
-   **Guard — empty changeset (`emptyChangeset: true`, all counts 0):** STOP. A 0/0/0 diff vs the latest snapshot means this doc is almost certainly **not a revision** of the tracked SRS. Surface `data.hint` and ask the user: is this a **new/different feature** (→ `/sf:ingest`) or a **spec tweak** (→ `/sf:change`)? Do **not** run steps 2-8 (the whole pipeline would be a silent no-op against the wrong input). Only proceed if the user confirms they genuinely expected an empty delta (e.g. re-running after a partial resync).
+   **Guard — empty changeset (`emptyChangeset: true`):** STOP. `emptyChangeset` is true only when BOTH layers (anchor + prose) saw nothing — so this doc is almost certainly **not a revision** of the tracked SRS. Surface `data.hint` and ask the user: is this a **new/different feature** (→ `/sf:ingest`) or a **spec tweak** (→ `/sf:change`)? Do **not** run steps 2-8 (the whole pipeline would be a silent no-op against the wrong input). Only proceed if the user confirms they genuinely expected an empty delta (e.g. re-running after a partial resync).
+
+   **Anchor-blind case (anchor counts 0/0/0 but `proseCounts` non-zero):** this IS a genuine revision of a prose-form SRS. Continue the pipeline; feed `data.prose` entries (section + text) to sd-author as the changeset, and pass the whole srs-diff result file to `trace-impact --changeset` — it harvests FR-/TC-/ERR_ ids mentioned in the changed text.
 
 2. **Resolve impact**
    Write the changeset JSON to a temp file, then:
