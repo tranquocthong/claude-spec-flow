@@ -176,7 +176,7 @@ Each sub-feature then runs the normal pipeline independently:
 [Product sends SRS v2]
         ▼
 /sf:resync <path/to/srs_v2.md>
-   • srs-diff           → diff vs last snapshot → CHANGESET (added/changed/removed)
+   • srs-diff           → diff vs last snapshot → CHANGESET (anchor layer + prose-bullet fallback)
    • trace-impact       → exact FR / TC / error / task IDs touched (via trace.json)
    • sd-author          → updates ONLY impacted SD sections (not a full regen)
         │ GATE: review the delta + leader approves
@@ -299,7 +299,7 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `trace-build --sd [--feature] [--tasks]` | build the feature's trace; merges `file-links.json` → adds `nodes.files` + `task-file`/`fr-file`/**`fr-task`** links. Writes a **durable per-feature copy** at `specs/<feature>/trace.json` + an active-feature mirror at `.spec-flow/trace.json`. Warns on §12.2 codes that violate `conventions.errorCodePattern` |
 | `trace-impact --ids/--keywords/--changeset [--feature]` | resolve impacted FR/TC/error nodes + **tasks** (via `fr-task`) + `impacted.files` — so `/sf:change` auto-reopens the task that implemented a changed FR |
 | `drift-check --feature [--tasks]` | **Layer-2 semantic SD-mismatch check**: diffs the actual error codes in the executor's `update-task` logs vs SD §12.2 → flags `spec-not-evidenced` (spec'd, no log evidence) and `impl-not-specced` (built but undocumented). Advisory; `/sf:phase` runs it before next_task |
-| `srs-diff --new [--old]` | best-effort CHANGESET between two SRS versions |
+| `srs-diff --new [--old]` | best-effort CHANGESET between two SRS versions — two layers: anchored ids/tables + per-section prose-bullet fallback (`prose`, `anchors` diagnostics), so a prose-form SRS revision never reads as an empty changeset; output is directly consumable by `trace-impact --changeset` |
 | `verify-collect --results` | parse run-checklist output → VERIFICATION truths[] |
 | `state-update --feature [--note]` | refresh `.spec-flow/STATE.md` (<100 lines) — incl. a deterministic Next Step |
 | `wave-plan [--max <n>]` | dependency-aware visibility: the ready-set of pending tasks whose deps are all done (what's workable now); reads `.taskmaster/tasks/tasks.json` (tagged or flat) |
