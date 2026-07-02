@@ -12,6 +12,11 @@
 # See references/test-rigor.md for the full BAD-vs-GOOD example + SHOULD rules.
 
 config:
+  # Checklist-declared variables — resolved before os.environ. `${FOO:-default}`
+  # as a value keeps an env override possible. Usable everywhere ${VAR} expands.
+  vars:
+    RESOURCE_NAME: my-service
+    FEATURE: example-feature
   base_url: http://localhost:${SERVER_PORT:-8080}
   db:
     host: localhost

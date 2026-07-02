@@ -32,7 +32,7 @@ When `/manual-test [args]` is invoked:
    | `id:RT-003` | Run a single test by ID |
 
 5. **For each test:**
-   1. Run `setup` (`sql` | `seed` ref | `http`+`capture` | `redis`)
+   1. Run `setup` (`sql` | `seed` ref | `http`+`capture` | `redis` | `exec` | `vars`)
    2. Execute `request` via curl (`http`) or `produce-event.sh` (`kafka`)
    3. Check `expect` (see Assertion Grammar below)
    4. Run `verify` SQL/Kafka queries (if present)
@@ -80,13 +80,13 @@ The canonical, runnable, fully-annotated example is **`templates/CHECKLIST.yaml`
 (copy it to start a new checklist). The top-level shape:
 
 ```yaml
-config:   { base_url, db: {database, ...}, redis: {host, port} }
+config:   { base_url, db: {database, ...}, redis: {host, port}, vars: {NAME: value} }
 tokens:   { <name>: { payload | auth: keycloak_ropc | type: keycloak-client-credentials } }
 seed:     { <name>: <SQL snippet> }      # referenced from setup via `- seed: <name>`
 cleanup:  { all: <SQL> }                 # runs once after all suites
 suites:
   - id: <suite>
-    setup: [...]                         # sql | seed | http(+capture) | redis
+    setup: [...]                         # sql | seed | http(+capture) | redis | exec | vars
     tests:
       - id: <TEST-ID>
         tags: [smoke, ...]
@@ -127,10 +127,11 @@ Full Kafka mechanics + helpers: `references/kafka-events.md`.
 
 `${VAR}` placeholders resolve in this order:
 
-1. `config` section values (DB, Redis, base_url)
+1. `config.vars:` declared in the checklist (loaded first; values are themselves
+   expanded, so `FOO: ${FOO:-default}` keeps an env override possible)
 2. Auto-discovered values from DB query
-3. Test-level `vars` in setup blocks
-4. Environment variables
+3. Test-level `- vars: {NAME: value}` steps in setup blocks (and `capture:` vars)
+4. Environment variables (`${VAR:-default}` inline defaults as last resort)
 
 ## Execution Notes
 

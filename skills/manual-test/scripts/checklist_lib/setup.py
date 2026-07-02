@@ -10,6 +10,7 @@ Each step is one of:
                           prints JSON, else `{VAR: stdout}` captures the whole output).
                           Generic escape hatch: request signing, token minting, any
                           pre-compute lives in the PROJECT's script — not in this runner.
+  - vars: {NAME: value}   set variables inline (values are ${VAR}-expanded)
 
 `ctx` carries: db, scripts_dir, base_url, varstore, tokens, doc.
 """
@@ -46,6 +47,8 @@ def _run_one(sb, ctx, dry_run):
         _do_redis(sb, ctx, dry_run)
     elif "exec" in sb:
         _do_exec(sb, ctx, dry_run)
+    elif "vars" in sb:
+        _do_vars(sb, ctx)
 
 
 def _do_sql(sb, ctx, dry_run):
@@ -119,6 +122,14 @@ def _do_exec(sb, ctx, dry_run):
             vs.set(var, vals[0] if vals else "")
         else:
             vs.set(var, out)  # capture whole stdout
+
+
+def _do_vars(sb, ctx):
+    # Inline assignment — runs even on dry-run (no I/O, and later step labels
+    # may reference the vars). Values are expanded, so `${OTHER}` refs work.
+    vs = ctx["varstore"]
+    for k, v in (sb["vars"] or {}).items():
+        vs.set(k, vs.expand(str(v)))
 
 
 def _do_redis(sb, ctx, dry_run):

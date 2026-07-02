@@ -109,6 +109,12 @@ def main(argv=None):
 
     vs = VarStore()
     cfg = doc.get("config", {}) or {}
+    # config.vars: checklist-declared variables — resolve BEFORE os.environ (see
+    # references/checklist.md "Variable Resolution"). Values are expanded on load,
+    # so `FOO: ${FOO:-default}` keeps an env override possible, and later vars may
+    # reference earlier ones. Loaded first so base_url/db below can use them.
+    for k, v in (cfg.get("vars") or {}).items():
+        vs.set(k, vs.expand(str(v)))
     base_url = args.base_url or vs.expand(cfg.get("base_url", "http://localhost:8081"))
     db_name = vs.expand(str((cfg.get("db") or {}).get("database", "${DB_NAME:-postgres}")))
     # Multi-service: named alternate base URLs (e.g. {auth_base_url: ...}). A test or

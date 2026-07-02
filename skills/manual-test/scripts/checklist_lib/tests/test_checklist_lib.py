@@ -311,5 +311,56 @@ class TestBaseUrlRef(unittest.TestCase):
         self.assertIn("base_url_ref", msg)
 
 
+class TestConfigVars(unittest.TestCase):
+    """config.vars: + `- vars:` setup step — checklist-declared variables."""
+
+    def test_config_vars_loaded_before_base_url(self):
+        import contextlib
+        import io
+        import tempfile
+        from checklist_lib import runner
+        doc = ("config:\n"
+               "  vars:\n"
+               "    SVC_PORT: '9099'\n"
+               "    GREETING: hello-${SVC_PORT}\n"
+               "  base_url: http://localhost:${SVC_PORT}\n"
+               "suites: []\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(doc)
+            path = f.name
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = runner.main(["--checklist", path, "--scripts-dir", ".", "--dry-run"])
+        os.unlink(path)
+        self.assertEqual(rc, 0)
+        self.assertIn("http://localhost:9099", out.getvalue())
+
+    def test_config_vars_value_keeps_env_override_pattern(self):
+        vs = VarStore()
+        os.environ["CFGVAR_TEST_X"] = "from-env"
+        try:
+            vs.set("X", vs.expand("${CFGVAR_TEST_X:-from-config}"))
+            self.assertEqual(vs.get("X"), "from-env")
+        finally:
+            del os.environ["CFGVAR_TEST_X"]
+
+    def test_vars_setup_step_sets_and_expands(self):
+        from checklist_lib import setup
+        vs = VarStore()
+        vs.set("BASE", "abc")
+        ctx = {"varstore": vs, "db": "d", "scripts_dir": ".", "base_url": "", "tokens": {}, "doc": {}}
+        err = setup.run_steps([{"vars": {"DERIVED": "${BASE}-123", "N": 7}}], ctx)
+        self.assertIsNone(err)
+        self.assertEqual(vs.get("DERIVED"), "abc-123")
+        self.assertEqual(vs.get("N"), "7")
+
+    def test_vars_setup_step_runs_on_dry_run(self):
+        from checklist_lib import setup
+        vs = VarStore()
+        ctx = {"varstore": vs, "db": "d", "scripts_dir": ".", "base_url": "", "tokens": {}, "doc": {}}
+        setup.run_steps([{"vars": {"K": "v"}}], ctx, dry_run=True)
+        self.assertEqual(vs.get("K"), "v")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

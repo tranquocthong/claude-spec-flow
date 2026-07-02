@@ -2,6 +2,16 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.10] — 2026-07-03
+
+Checklist runner: `config.vars:` and the `- vars:` setup step actually work.
+
+- **Bug: the runner ignored `config.vars:` entirely.** `runner.main` only read `config.base_url`, `config.base_urls`, and `config.db` — variables declared under `config.vars:` never reached the `VarStore`, so `${VAR}` expansion silently fell through to `os.environ` (empty string if unset). The docs' "Variable Resolution" order promised config values resolve first; the code never implemented it.
+- **Fix (`checklist_lib/runner.py`):** `config.vars:` entries load into the `VarStore` first — before `base_url`/`db` expansion, so those can reference them. Values are themselves expanded on load, so `FOO: ${FOO:-default}` keeps an env override possible and later vars can reference earlier ones.
+- **Same-family gap: "test-level `vars` in setup blocks"** (docs resolution step 3) had no corresponding setup step — `setup._run_one` only handled `sql | seed | http | redis | exec`. New `- vars: {NAME: value}` step sets variables inline (expanded), and runs on dry-run too (inert, and later step labels may reference the vars).
+- Docs (`references/checklist.md`): Variable Resolution section rewritten to match the implemented order; setup-step lists and the `config:` shape line now include `exec` and `vars`. Template `CHECKLIST.yaml` gains a commented `config.vars:` example.
+- Tests: 40 → 44 (config.vars expands into `base_url` via dry-run `runner.main`; env-override pattern; `vars` setup step expansion; dry-run behavior).
+
 ## [0.5.9] — 2026-07-02
 
 Per-agent model overrides move from hardcoded frontmatter to project config.
