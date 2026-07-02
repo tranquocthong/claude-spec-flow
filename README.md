@@ -390,7 +390,7 @@ skills/srs-to-sd/ entry-point skill (intent routing + gates)
 skills/manual-test/ bundled local-test harness (CHECKLIST.yaml, run-checklist.sh, ...)
 skills/commit/     bundled conventional-commit + push skill (VCS-agnostic, base-branch guard)
 agents/           sd-author (SRS→clean SD) · hybrid-executor (impl one task)
-hooks/            checklist-to-verification (PostToolUse) · sd-drift-detect (PreToolUse) · spec-flow-anchor (UserPromptSubmit re-anchor)
+hooks/            checklist-to-verification (PostToolUse) · sd-drift-detect (PreToolUse) · spec-flow-anchor (UserPromptSubmit: session-wide config.language + flow re-anchor)
 bin/flow-tools.cjs  thin CLI entry + workflow commands (trace/verify/checklist/state/bug/epic/branch/status)
 lib/core.cjs        shared infra + SRS/SD parsers + genSd (no command logic)
 lib/maintenance.cjs static, non-workflow commands: init · init-project · learn · doctor

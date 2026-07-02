@@ -2,6 +2,15 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.8] — 2026-07-02
+
+`config.language` goes session-wide.
+
+- **Bug: the language directive only fired on flow-referencing prompts.** The anchor hook gated BOTH the language directive and the STATE re-anchor behind the `/sf:|spec-flow|srs|solution design` prompt filter — so a project with `language: vi` still got English replies on ordinary questions (docker, debugging, anything not naming the flow). A user who sets a language expects every reply in the project to use it.
+- **Fix (`hooks/spec-flow-anchor.sh`):** the language directive now fires on **every prompt** in a spec-flow project (still only when `config.language` is set and ≠ `en`), compacted to a single injected line to keep per-prompt noise minimal. The verbose STATE re-anchor keeps the flow-referencing gate unchanged. Code-stays-English carve-outs (comments, identifiers, log/error messages, error codes, test names, commit messages, SD headings/IDs) preserved verbatim.
+- **`commands/init.md`** — effect (2) wording updated: session-wide, not just `/sf:*` turns.
+- Housekeeping: `.claude-plugin/plugin.json` version bumped 0.5.5 → 0.5.8 (had lagged since 0.5.6); README hook line synced.
+
 ## [0.5.7] — 2026-07-02
 
 `task-baseline` — the backfill bridge: evidence-driven `done` for features implemented before their SD existed.
