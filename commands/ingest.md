@@ -110,6 +110,13 @@ With a file path given, skip Mode 0 and go straight to the Steps.
    ```
    **The agent CAN run these** (same as every other CLI AI op in `/sf:phase`): the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing on the Bash PATH does *not* mean it can't run. Use the **CLI** form above (reads `.taskmaster/config.json` fresh); the MCP `parse_prd` tool can fail on a stale-cached provider (see the Task Master note in `/sf:phase`). Only if the CLI genuinely errors on a missing provider/key do you ask the user to run it in their terminal.
 
+   **Backfill ingest (the feature was implemented BEFORE this SD existed):** `parse-prd` seeds EVERYTHING as `pending` — including scope that already ships — so a later `/sf:phase` could re-implement working code. After the shipped scope has passed `/sf:manual-test` (VERIFICATION.md exists), run:
+   ```
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs task-baseline --feature <feature>            # dry-run proposal
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs task-baseline --feature <feature> --apply    # after review
+   ```
+   It marks a task `done` ONLY when its full evidence set (TCs of the FRs it implements) is recorded `verified` in VERIFICATION.md — SD prose/status labels are never trusted. No VERIFICATION yet → it baselines nothing and points you to `/sf:manual-test`; the manual-test gate stays the only door to `done`.
+
 ## Output
 - `.spec-flow/specs/<feature>/SD.md` (draft — Pass-1 harvest + Pass-2 clean)
 - `CONTEXT.md` (locked decisions)

@@ -11,6 +11,7 @@
  *
  * Commands: init, srs-snapshot, sd-skeleton, route, checklist-gen, trace-build, trace-impact,
  *           trace-repos, trace-link, srs-diff, state-update, verify-collect, verify-code, wave-plan,
+ *           task-baseline,
  *           epic-new, epic-list, bug-new, bug-list, branch-ensure,
  *           learn, doctor, status-report
  */
@@ -1185,6 +1186,108 @@ const commands = {
       doneCount,
       total: tasks.length,
       max,
+    });
+  },
+
+  // -----------------------------------------------------------------------
+  // task-baseline  --feature <f>  [--apply]
+  //
+  // Backfill bridge. A feature implemented BEFORE its SD was ingested has no
+  // task-status ledger: parse-prd seeds everything as `pending` and an executor
+  // could re-implement (or overwrite) already-shipped scope. This marks tasks
+  // `done` from EVIDENCE only — a task qualifies iff its evidence set (the TCs
+  // of every FR it implements, plus TCs named in its own text) is non-empty and
+  // every one of them is recorded `verified` in VERIFICATION.md (the
+  // /sf:manual-test gate output). SD prose / status labels are NEVER consulted:
+  // done means evidence, not claim. No VERIFICATION.md → nothing baselines —
+  // the manual-test gate stays the only door to `done`.
+  //
+  // Task→FR mapping, strongest first:
+  //   1. fr-task links in trace.json (recorded via trace-link during /sf:phase)
+  //   2. fallback: FR-/TC- ids mentioned in the task's own title/description/
+  //      details/testStrategy (deterministic text scan — parse-prd tasks carry
+  //      the SD's FR ids). The report says which source mapped each task.
+  //
+  // Dry-run by default (proposal for human review); --apply writes tasks.json
+  // (status=done + an evidence note in details). Only `pending` tasks move.
+  // -----------------------------------------------------------------------
+  'task-baseline'(args) {
+    const feature = args.feature || (readJsonSafe(PATHS.trace, null) || {}).feature;
+    if (!feature) return err('MISSING_ARG: --feature <feature>');
+    const trace = readTrace(feature);
+    if (!trace) return err('NO_TRACE: run trace-build first');
+
+    const verPath = path.join(STATE_DIR, 'specs', feature, 'VERIFICATION.md');
+    if (!fs.existsSync(verPath)) {
+      return ok({
+        feature, applied: false, baselined: [], skipped: [], verifiedTcs: [],
+        note: 'no VERIFICATION.md — run /sf:manual-test first; task-baseline only trusts recorded evidence',
+      });
+    }
+    const verifiedTcs = new Set();
+    for (const m of fs.readFileSync(verPath, 'utf8').matchAll(/^\s*-\s*(TC-\d+)\s*:\s*verified\b/gim)) {
+      verifiedTcs.add(m[1].toUpperCase());
+    }
+
+    const frToTcs = new Map();   // FR → Set(TC)
+    const taskToFrs = new Map(); // task id → Set(FR) (from trace fr-task links)
+    for (const l of trace.links || []) {
+      if (l.type === 'fr-tc') {
+        if (!frToTcs.has(l.from)) frToTcs.set(l.from, new Set());
+        frToTcs.get(l.from).add(String(l.to).toUpperCase());
+      }
+      if (l.type === 'fr-task') {
+        const t = String(l.to);
+        if (!taskToFrs.has(t)) taskToFrs.set(t, new Set());
+        taskToFrs.get(t).add(l.from);
+      }
+    }
+
+    const tmPath = path.join(process.cwd(), '.taskmaster', 'tasks', 'tasks.json');
+    const tmRaw = readJsonSafe(tmPath, null);
+    const tasks = readTmTasks(tmRaw, feature);
+    if (!tasks.length) return err('NO_TASKS: seed tasks first (parse-prd --tag <feature>), then baseline');
+
+    const baselined = [], skipped = [];
+    for (const t of tasks) {
+      const id = String(t.id);
+      const status = String(t.status || '').toLowerCase();
+      if (status !== 'pending') { skipped.push({ id, reason: `status=${status} (only pending tasks baseline)` }); continue; }
+
+      let frs = [...(taskToFrs.get(id) || [])];
+      let mappedVia = frs.length ? 'trace fr-task link' : null;
+      const text = [t.title, t.description, t.details, t.testStrategy].filter(Boolean).join(' ');
+      if (!frs.length) {
+        frs = [...new Set((text.match(/\bFR-\d+\b/gi) || []).map(s => s.toUpperCase()))];
+        if (frs.length) mappedVia = 'task text mention';
+      }
+      const tcSet = new Set(frs.flatMap(fr => [...(frToTcs.get(fr) || [])]));
+      for (const m of text.match(/\bTC-\d+\b/gi) || []) tcSet.add(m.toUpperCase());
+      const tcs = [...tcSet];
+      if (!tcs.length) { skipped.push({ id, reason: 'no evidence set (no fr-task link, no FR/TC id in task text)' }); continue; }
+      const unverified = tcs.filter(tc => !verifiedTcs.has(tc));
+      if (unverified.length) { skipped.push({ id, reason: `unverified TCs: ${unverified.join(', ')}` }); continue; }
+      baselined.push({ id, title: t.title || '', frs, tcs, mappedVia });
+    }
+
+    if (args.apply && baselined.length) {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const byId = new Map(tasks.map(t => [String(t.id), t]));
+      for (const b of baselined) {
+        const t = byId.get(b.id);
+        t.status = 'done';
+        const note = `baselined from VERIFICATION ${stamp} (evidence: ${b.tcs.join(', ')})`;
+        t.details = t.details ? `${t.details}\n${note}` : note;
+      }
+      fs.writeFileSync(tmPath, JSON.stringify(tmRaw, null, 2));
+    }
+
+    return ok({
+      feature,
+      applied: !!(args.apply && baselined.length),
+      verifiedTcs: [...verifiedTcs],
+      baselined, skipped,
+      note: args.apply ? null : 'dry-run — review the proposal, then re-run with --apply',
     });
   },
 

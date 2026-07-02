@@ -9,7 +9,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
  └─────────────────────  /sf:change  (you change your mind) ───────────
 ```
 
-> v0.5.6 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
+> v0.5.7 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
 
 ## What you get
 
@@ -302,6 +302,7 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `srs-diff --new [--old]` | best-effort CHANGESET between two SRS versions — two layers: anchored ids/tables + per-section prose-bullet fallback (`prose`, `anchors` diagnostics), so a prose-form SRS revision never reads as an empty changeset; output is directly consumable by `trace-impact --changeset` |
 | `verify-collect --results` | parse run-checklist output → VERIFICATION truths[] |
 | `state-update --feature [--note]` | refresh `.spec-flow/STATE.md` (<100 lines) — incl. a deterministic Next Step |
+| `task-baseline --feature [--apply]` | backfill bridge: mark tasks `done` from EVIDENCE only (every TC in the task's evidence set recorded `verified` in VERIFICATION.md; task→FR via trace `fr-task` links, fallback FR/TC ids in task text). Dry-run by default; `--apply` writes. No VERIFICATION → baselines nothing — manual-test stays the only door to `done` |
 | `wave-plan [--max <n>]` | dependency-aware visibility: the ready-set of pending tasks whose deps are all done (what's workable now); reads `.taskmaster/tasks/tasks.json` (tagged or flat) |
 | `bug-new --desc [--severity] [--repro] [--expected] [--actual] [--feature]` | create `.spec-flow/bugs/<NNN>-bug-<slug>.md` bug record (id: bug-NNN); returns `{ id, path, severity }` |
 | `bug-list` | list `.spec-flow/bugs/*.md` with `{ id, status, severity, feature, desc }` |
@@ -427,7 +428,7 @@ All dependencies are pinned — updates are deliberate and tested, never automat
 
 ## Status & known limits
 
-- Engine (25 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 83 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
+- Engine (26 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 86 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
 - **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8, now **per file**) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
 - **In active dogfooding** — used on real projects; fixes ship straight from live-use feedback (recent: per-feature durable trace, multi-repo verify-code scoping, design-type-aware checklist-gen, ID-prefix SRS harvest for non-English specs). Not yet a confident team-wide release.
 - SRS harvest is intentionally dirty; `sd-author` (AI) cleans it — don't judge the harvest output directly.

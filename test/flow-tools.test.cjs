@@ -1297,3 +1297,99 @@ test('trace-impact: accepts srs-diff output shape directly and harvests ids from
   assert.ok(r.data.impacted.fr.includes('FR-001'), 'FR-001 harvested from prose entry text');
   assert.ok(r.data.impacted.tc.includes('TC-001'), 'transitive fr-tc walk still applies');
 });
+
+// ---------------------------------------------------------------------------
+// task-baseline — evidence-driven done for backfilled features (0.5.7)
+// ---------------------------------------------------------------------------
+
+/** Seed a demo feature: SD (FR-001/TC-001 + FR-002/TC-002), trace, tagged tasks.json. */
+function seedBaselineProject() {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns JWT | Must Have | US-1 |',
+    '| FR-002 | Logout revokes refresh | Must Have | US-1 |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy | Valid creds login | JWT 200 | FR-001 |',
+    '| TC-002 | Happy | Logout | refresh revoked | FR-002 |', '',
+  ].join('\n'));
+  // Task 1 mapped via trace fr-task link; task 2 only mentions FR-002 in its text.
+  const tl = run(['trace-link', '--task', '1', '--feature', 'demo', '--fr', 'FR-001', '--files', 'src/login.go'], dir);
+  assert.equal(tl.ok, true);
+  const tb = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(tb.ok, true);
+  const tmDir = path.join(dir, '.taskmaster', 'tasks');
+  fs.mkdirSync(tmDir, { recursive: true });
+  fs.writeFileSync(path.join(tmDir, 'tasks.json'), JSON.stringify({
+    demo: { tasks: [
+      { id: 1, title: 'Implement login', status: 'pending' },
+      { id: 2, title: 'Implement logout (FR-002)', status: 'pending' },
+      { id: 3, title: 'Unrelated infra chore', status: 'pending' },
+    ] },
+  }, null, 2));
+  return dir;
+}
+
+test('task-baseline: no VERIFICATION.md → zero baselined (manual-test gate stays the only door to done)', () => {
+  const dir = seedBaselineProject();
+  const r = run(['task-baseline', '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.baselined.length, 0, 'no evidence, no done');
+  assert.match(r.data.note, /VERIFICATION/i, 'note routes to /sf:manual-test');
+});
+
+test('task-baseline: dry-run proposes from evidence (trace link + text fallback), --apply writes done', () => {
+  const dir = seedBaselineProject();
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'VERIFICATION.md'), [
+    '# VERIFICATION — demo', '', 'status: passed', '', 'truths:',
+    '- TC-001: verified',
+    '- TC-002: verified', '',
+  ].join('\n'));
+
+  // Dry-run: proposal only, tasks.json untouched.
+  const dry = run(['task-baseline', '--feature', 'demo'], dir);
+  assert.equal(dry.ok, true);
+  assert.equal(dry.data.applied, false);
+  const ids = dry.data.baselined.map(b => b.id);
+  assert.deepEqual(ids.sort(), ['1', '2'], 'task 1 (trace link) + task 2 (text mention) qualify');
+  assert.equal(dry.data.baselined.find(b => b.id === '1').mappedVia, 'trace fr-task link');
+  assert.equal(dry.data.baselined.find(b => b.id === '2').mappedVia, 'task text mention');
+  assert.ok(dry.data.skipped.some(s => s.id === '3' && /no evidence set/.test(s.reason)),
+    'unmapped task skipped with explicit reason, never silently done');
+  let tm = JSON.parse(fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8'));
+  assert.ok(tm.demo.tasks.every(t => t.status === 'pending'), 'dry-run writes nothing');
+
+  // Apply: statuses move, evidence note recorded.
+  const ap = run(['task-baseline', '--feature', 'demo', '--apply'], dir);
+  assert.equal(ap.ok, true);
+  assert.equal(ap.data.applied, true);
+  tm = JSON.parse(fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8'));
+  const byId = Object.fromEntries(tm.demo.tasks.map(t => [t.id, t]));
+  assert.equal(byId[1].status, 'done');
+  assert.equal(byId[2].status, 'done');
+  assert.equal(byId[3].status, 'pending', 'unmapped task untouched');
+  assert.match(byId[1].details, /baselined from VERIFICATION .* TC-001/, 'evidence note in details');
+});
+
+test('task-baseline: partially verified evidence set does NOT baseline (full-coverage rule)', () => {
+  const dir = seedBaselineProject();
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'VERIFICATION.md'), [
+    '# VERIFICATION — demo', '', 'truths:',
+    '- TC-001: verified',
+    '- TC-002: failed', '',
+  ].join('\n'));
+  const r = run(['task-baseline', '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  const ids = r.data.baselined.map(b => b.id);
+  assert.deepEqual(ids, ['1'], 'only the fully-verified task baselines');
+  assert.ok(r.data.skipped.some(s => s.id === '2' && /unverified TCs: TC-002/.test(s.reason)),
+    'failed TC blocks its task with the exact reason');
+});

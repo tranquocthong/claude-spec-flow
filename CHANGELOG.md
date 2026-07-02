@@ -2,6 +2,15 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.7] — 2026-07-02
+
+`task-baseline` — the backfill bridge: evidence-driven `done` for features implemented before their SD existed.
+
+- **Gap: backfilled features had no task-status ledger.** Ingesting an SD for already-shipped code, then seeding tasks (`parse-prd`), marks EVERYTHING `pending` — a later `/sf:phase` executor has no way to know which scope already ships and could re-implement or overwrite working code.
+- **New engine command `task-baseline --feature <f> [--apply]`** — marks tasks `done` from EVIDENCE only: a task qualifies iff its evidence set (the TCs of every FR it implements, plus TCs named in its own text) is non-empty and every one is recorded `verified` in `VERIFICATION.md` (the `/sf:manual-test` gate output). SD prose/status labels are never consulted — done means evidence, not claim. Task→FR mapping: trace `fr-task` links first, deterministic FR/TC-id text scan as fallback (backfilled features have no trace-link history); the report names the mapping source per task. Dry-run by default (proposal for human review), `--apply` writes `status=done` + an evidence note to `details`; only `pending` tasks move; unmapped/partially-verified tasks are skipped with explicit reasons. No `VERIFICATION.md` → baselines nothing and routes to `/sf:manual-test` — the manual-test gate stays the only door to `done`.
+- **`commands/ingest.md`** — backfill note after the seeding step: manual-test the shipped scope first, then `task-baseline` (dry-run → review → `--apply`).
+- Tests: 83 → 86.
+
 ## [0.5.6] — 2026-07-02
 
 Close the prose-SRS blind spot in resync: `srs-diff` gets a prose-level fallback layer, and `trace-impact` finally understands `srs-diff`'s own output.
