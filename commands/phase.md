@@ -80,7 +80,7 @@ Returns per-FR complexity scores (1–10):
    mcp__task-master-ai__next_task   # tag: "<feature>"  (see per-feature tag rule above — applies to every TM op below)
    ```
 
-2. **Spawn hybrid-executor** with: task details + `CONTEXT.md` + relevant SD section refs (from `.spec-flow/trace.json` FR→TC links). Note that **code stays English even when `config.language` ≠ `en`** (that setting is for conversation + docs only).
+2. **Spawn hybrid-executor** with: task details + `CONTEXT.md` + relevant SD section refs (from `.spec-flow/trace.json` FR→TC links). Note that **code stays English even when `config.language` ≠ `en`** (that setting is for conversation + docs only). **Model:** read `config.json → models.hybridExecutor`; if set to a non-null value, pass it as the Agent tool's `model` param (overrides the agent's packaged `sonnet` default). If absent/`null`, omit the param — the agent falls back to its own frontmatter.
 
    After it returns, **check TDD evidence in its summary before proceeding**:
    - For a feature task: the summary must mention a test file written and either `gate: "red-confirmed"` (testCommand ran and confirmed RED) or an explicit note that testCommand is not configured. If neither appears, ask the executor to show the RED confirmation before treating the task as implemented.

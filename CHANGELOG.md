@@ -2,6 +2,16 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.9] — 2026-07-02
+
+Per-agent model overrides move from hardcoded frontmatter to project config.
+
+- **`sd-author` no longer pins `model: sonnet`** — it now inherits whatever model is driving the main session, matching how every other prompt-level agent behaves by default.
+- **New `config.json → models` block** (seeded by `/sf:init`, patched into existing configs): `{ "sdAuthor": null, "hybridExecutor": "sonnet" }`. `null` = inherit the main session's model; a string pins that agent to a specific model regardless of the agent file's own frontmatter default.
+- **`/sf:ingest`, `/sf:resync`** — the sd-author spawn step now reads `models.sdAuthor` and passes it as the Agent tool's `model` param when set.
+- **`/sf:phase`** — the hybrid-executor spawn step now reads `models.hybridExecutor` (still `sonnet` by default) and passes it the same way.
+- Tests: 86 → 88 (`config.models` seeded on fresh init; patched into a pre-existing `config.json` missing it).
+
 ## [0.5.8] — 2026-07-02
 
 `config.language` goes session-wide.

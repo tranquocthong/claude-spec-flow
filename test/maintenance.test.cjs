@@ -58,6 +58,24 @@ test('init-project: auto-detects java-maven from pom.xml (mvn, not gradle) (#3)'
   });
 });
 
+test('init-project: seeds config.models (sdAuthor inherits, hybridExecutor pinned to sonnet)', () => {
+  inTmp(() => {
+    maintenance['init-project']({});
+    const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
+    assert.deepEqual(cfg.models, { sdAuthor: null, hybridExecutor: 'sonnet' });
+  });
+});
+
+test('init-project: patches config.models into a pre-existing config.json missing it', () => {
+  inTmp(() => {
+    fs.mkdirSync('.spec-flow', { recursive: true });
+    fs.writeFileSync('.spec-flow/config.json', JSON.stringify({ project: 'p', stack: 'node' }));
+    maintenance['init-project']({});
+    const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
+    assert.deepEqual(cfg.models, { sdAuthor: null, hybridExecutor: 'sonnet' });
+  });
+});
+
 test('init-project: no build markers → unknown (empty verify, no false gate)', () => {
   inTmp(() => {
     const r = maintenance['init-project']({});

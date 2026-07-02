@@ -1,7 +1,6 @@
 ---
 name: sd-author
 description: Reads a dirty-harvested SD + the raw SRS, then produces a clean, approved-ready Solution Design — merging fragmented FR rows, deriving TC + error codes from business-logic rules, filling architecture/sequence/state reasoning sections. Used by /sf:ingest (Pass-2) and /sf:resync (delta re-derive).
-model: sonnet
 color: blue
 tools: Read, Write, Edit
 ---

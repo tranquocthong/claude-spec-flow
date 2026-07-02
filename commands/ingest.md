@@ -70,7 +70,7 @@ With a file path given, skip Mode 0 and go straight to the Steps.
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs status-report   # or grep "language" .spec-flow/config.json
    ```
-   Spawn **sd-author** with: SRS path + SD draft from step 3 + `CONTEXT.md` (if present) + `--type` **+ an explicit first line of the spawn prompt: `Author all SD/CONTEXT prose in language: <config.language>` (e.g. `vi`).** Pass this even though sd-author also reads `config.json` — surfacing it explicitly is what makes the language actually take effect (a buried rule the sub-agent may skip is not enough). If `config.language` is `en`, no directive needed.
+   Spawn **sd-author** with: SRS path + SD draft from step 3 + `CONTEXT.md` (if present) + `--type` **+ an explicit first line of the spawn prompt: `Author all SD/CONTEXT prose in language: <config.language>` (e.g. `vi`).** Pass this even though sd-author also reads `config.json` — surfacing it explicitly is what makes the language actually take effect (a buried rule the sub-agent may skip is not enough). If `config.language` is `en`, no directive needed. **Model:** read `config.json → models.sdAuthor`; if set to a non-null value, pass it as the Agent tool's `model` param. If absent/`null` (the default), omit the param — sd-author inherits the main session's model.
 
    sd-author will:
    - Merge fragmented/list-intro FR rows into atomic requirements; drop non-requirements.

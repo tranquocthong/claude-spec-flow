@@ -36,7 +36,7 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
 
 3. **Update SD delta only**
    - Re-run `sd-skeleton --srs <srs_v2.md> --force` (the `--force` is required — sd-skeleton refuses to overwrite an existing SD otherwise; resync deliberately re-derives the impacted deterministic sections: §5.1 FR, §12.2 errors, §13.2 TC rows for impacted IDs).
-   - Spawn **sd-author** with: new SRS + current SD + impacted FR/TC IDs from step 2 + `CONTEXT.md` **+ an explicit first line of the spawn prompt: `Author all SD/CONTEXT prose in language: <config.language>`** (read `config.language`, default `en`; skip the directive when `en`). Surfacing it explicitly is what makes the language take effect — don't rely on the sub-agent reading `config.json` on its own. sd-author re-derives only impacted reasoning sections; marks touched sections `TODO:MANUAL-REVIEW`.
+   - Spawn **sd-author** with: new SRS + current SD + impacted FR/TC IDs from step 2 + `CONTEXT.md` **+ an explicit first line of the spawn prompt: `Author all SD/CONTEXT prose in language: <config.language>`** (read `config.language`, default `en`; skip the directive when `en`). Surfacing it explicitly is what makes the language take effect — don't rely on the sub-agent reading `config.json` on its own. sd-author re-derives only impacted reasoning sections; marks touched sections `TODO:MANUAL-REVIEW`. **Model:** read `config.json → models.sdAuthor`; if set to a non-null value, pass it as the Agent tool's `model` param. If absent/`null` (the default), omit the param — sd-author inherits the main session's model.
 
 4. **Gate — wait for review**
    Report SD delta diff + remaining `TODO:MANUAL-REVIEW` count. **Refuse to cascade tasks while any TODO marker remains.**
