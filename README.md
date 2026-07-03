@@ -9,7 +9,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
  └─────────────────────  /sf:change  (you change your mind) ───────────
 ```
 
-> v0.5.10 — Spec-driven dev for Claude Code: a messy SRS (or just an idea) → a reviewed Solution Design → adaptive implementation that traces back to every line.
+[![release](https://img.shields.io/github/v/release/tranquocthong/claude-spec-flow)](https://github.com/tranquocthong/claude-spec-flow/releases)
 
 ## What you get
 
@@ -23,10 +23,10 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
 ## Install
 
 ```
-/plugin marketplace add <path-to-or-git-url>/claude-spec-flow
+/plugin marketplace add tranquocthong/claude-spec-flow
 /plugin install sf@claude-spec-flow
 ```
-Reload Claude Code, then verify: **`/sf:doctor`**. Prereqs: node ≥ 18 + npm. **No API key** — `/sf:init` sets Task Master to the keyless `claude-code` provider (auto-fetched via `npx`).
+Reload Claude Code, then verify: **`/sf:doctor`**. Prereqs: node ≥ 18 + npm; python3 + PyYAML (`pip3 install pyyaml`) for the manual-test checklist runner. **No API key** — `/sf:init` sets Task Master to the keyless `claude-code` provider (auto-fetched via `npx`).
 
 <details><summary>Team install · zero-install engine</summary>
 
@@ -296,6 +296,7 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `checkpoint-clear --feature` | remove `checkpoint.md` when task reaches done (no-op if absent) |
 | `checklist-status --feature [--file]` | classify each CHECKLIST test `filled` / `scaffold` (still has TODO stubs) / `no-verify` / `live-e2e` + a `ready` flag — know what's runnable without eyeballing the YAML |
 | `trace-link --task <id> --feature <f> [--fr <FR-id>] --files "p1,p2,..."` | record task→file (and FR→file / FR→task when `--fr` given) links into `.spec-flow/specs/<feature>/file-links.json` (per-feature; falls back to the active feature if `--feature` omitted); deduplicated, persistent across `trace-build` rebuilds |
+| `trace-repos --feature <f> [--set "a,b"]` | declare/read the repo subset a feature targets (`trace.json.repos[]`, validated against `config.repos`) — read by `branch-ensure` and `verify-code` before any file-links evidence exists; no `--set` = read |
 | `trace-build --sd [--feature] [--tasks]` | build the feature's trace; merges `file-links.json` → adds `nodes.files` + `task-file`/`fr-file`/**`fr-task`** links. Writes a **durable per-feature copy** at `specs/<feature>/trace.json` + an active-feature mirror at `.spec-flow/trace.json`. Warns on §12.2 codes that violate `conventions.errorCodePattern` |
 | `trace-impact --ids/--keywords/--changeset [--feature]` | resolve impacted FR/TC/error nodes + **tasks** (via `fr-task`) + `impacted.files` — so `/sf:change` auto-reopens the task that implemented a changed FR |
 | `drift-check --feature [--tasks]` | **Layer-2 semantic SD-mismatch check**: diffs the actual error codes in the executor's `update-task` logs vs SD §12.2 → flags `spec-not-evidenced` (spec'd, no log evidence) and `impl-not-specced` (built but undocumented). Advisory; `/sf:phase` runs it before next_task |
@@ -310,6 +311,7 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `epic-new --name <epic> [--subs "subA,subB,subC"]` | create `.spec-flow/epics/<slug>.md` with sub-feature list; idempotent (reports `alreadyExists` if run twice) |
 | `epic-list` | list `.spec-flow/epics/*.md` with `{ id, name, status, subCount }` |
 | `verify-code [--feature <f>] [--repos "a,b"]` | **generic quality gate**: run tests, check coverage threshold, scan for forbidden patterns + secrets — driven by `.spec-flow/config.json → verify`; skips gracefully when unconfigured. **Multi-repo:** `--feature`/`--repos` scopes the scan to the repos that feature touched (from `file-links.json`) so an unrelated repo's red WIP can't poison the gate |
+| `status-report [--feature <f>]` | pure-read status aggregate: project, branch, feature, SD, tasks, trace, ready-set, verification, open bugs/changes, latest snapshot + a deterministic `nextStep` — the data source behind `/sf:status` |
 | `doctor [--sd <SD.md>] [--feature <f>]` | **health check**: env · plugin files · install state · project init · trace health · SD gate · tasks info |
 
 </details>
@@ -442,7 +444,7 @@ All dependencies are pinned — updates are deliberate and tested, never automat
 
 ## Status & known limits
 
-- Engine (26 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 86 tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites).
+- Engine (28 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 88 engine tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites) + 44 checklist-runner tests (`python3 -m unittest checklist_lib.tests.test_checklist_lib`, from `skills/manual-test/scripts/`).
 - **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8, now **per file**) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
 - **In active dogfooding** — used on real projects; fixes ship straight from live-use feedback (recent: per-feature durable trace, multi-repo verify-code scoping, design-type-aware checklist-gen, ID-prefix SRS harvest for non-English specs). Not yet a confident team-wide release.
 - SRS harvest is intentionally dirty; `sd-author` (AI) cleans it — don't judge the harvest output directly.
