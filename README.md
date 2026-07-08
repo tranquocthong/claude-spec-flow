@@ -379,11 +379,14 @@ Which model spawns **sd-author** and **hybrid-executor** is DATA in `.spec-flow/
 ```json
 "models": {
   "sdAuthor": null,          // null = inherit the main session's model
-  "hybridExecutor": "sonnet" // fixed model — overrides the agent's own frontmatter default
+  "hybridExecutor": "sonnet", // fixed model — overrides the agent's own frontmatter default
+  "taskmaster": { "main": "sonnet", "research": "sonnet" } // Task Master CLI's own model, per role
 }
 ```
 
 `/sf:ingest` and `/sf:resync` read `models.sdAuthor` before spawning sd-author; `/sf:phase` reads `models.hybridExecutor` before spawning hybrid-executor. A non-null value is passed as the Agent tool's `model` param (wins over the agent's packaged frontmatter default); `null`/absent omits the param so the agent inherits the main session's model.
+
+**`models.taskmaster` is a different mechanism** — `sdAuthor`/`hybridExecutor` control Agent-tool spawns inside this session; `taskmaster.{main,research}` controls the *Task Master CLI's own* model for `parse-prd`/`analyze-complexity`/`expand`/`research`/`update-task` (a separate subprocess with its own `.taskmaster/config.json`, not reachable via the Agent tool's `model` param). Env-var overrides for Task Master (`TASKMASTER_MODEL_MAIN` etc.) do **not** work against its local file-storage CLI — live-verified. The only mechanism that actually works is `task-master models --set-<role> <model> --claude-code`, which writes directly to `.taskmaster/config.json`. Before each AI-op, `taskmaster-model-plan --role <main|research>` (pure, no subprocess) decides whether a change is needed; if so, the orchestrator sets the model, runs the op, then restores the previous value **unconditionally** via a bash `trap ... EXIT` — even if the op fails. `null`/absent (default `"sonnet"`, matching Task Master's own default) → no-op, zero behavior change. No `fallback` key — no CLI op selects that role directly.
 </details>
 
 <details><summary><b>Non-negotiable gates</b></summary>

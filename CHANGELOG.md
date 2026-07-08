@@ -2,6 +2,22 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.11] — 2026-07-08
+
+`config.json → models.taskmaster` — project-scoped model override for Task Master's own CLI (`parse-prd`, `analyze-complexity`, `expand`, `research`, `update-task`), not just Agent-tool spawns.
+
+- **Gap: no lever for Task Master's own model.** `models.sdAuthor`/`hybridExecutor` (0.5.9) only affect Agent-tool spawns inside the session — Task Master CLI (`npx task-master-ai`) is a separate subprocess with its own `.taskmaster/config.json`, untouched by that mechanism. A project wanting "always opus for AI-ops" had no way to apply it automatically.
+- **Live-tested and ruled out: env-var injection.** `TASKMASTER_MODEL_MAIN`/`RESEARCH`/`FALLBACK` exist in Task Master's source (`EnvironmentConfigProvider`) but were confirmed via direct testing (baseline vs. override `parse-prd` runs, telemetry compared) to have **no effect** on the local file-storage CLI path — likely wired only for a newer cloud-sync storage mode. A full implementation built on this mechanism was reverted mid-session once proven false; do not reintroduce it.
+- **Live-verified mechanism that actually works:** `task-master models --set-main/--set-research <model> --claude-code` writes directly to `.taskmaster/config.json`, confirmed twice independently (file content before/after, plus `parse-prd` telemetry showing the overridden model).
+- **New engine command `taskmaster-model-plan --role <main|research>`** (`bin/flow-tools.cjs`): pure — reads `config.json → models.taskmaster.<role>` and `.taskmaster/config.json → models.<role>.modelId`, returns `{needsChange, configured, previous}`. No subprocess, no network, <50ms.
+- **`commands/ingest.md` / `commands/phase.md`** wrap every Task Master AI-op call site: plan → conditional `models --set-<role>` → the AI-op → **unconditional** restore via bash `trap ... EXIT` (fires even if the AI-op fails) — no `jq` dependency, uses `node -e` for JSON field extraction.
+- **`config.json → models.taskmaster`**: `{main: "sonnet", research: "sonnet"}` seeded by `/sf:init`, patched into existing configs. No `fallback` key — no CLI op selects that role via a direct flag.
+- **Three unrelated bugs fixed along the way** (found while filling this feature's own CHECKLIST.yaml — all pre-existing, unrelated to `models.taskmaster`):
+  - `checklist-status`: classification scanned the whole test body including checklist-gen's own scaffold-hint comments (which mention both `[no-verify]` and `[live-e2e]` in prose), so a genuinely `live-e2e` test always misclassified as `no-verify`. Now strips comment lines before matching — only the real `tags:` line drives classification.
+  - `status-report`: the checklist summary counted raw `TODO` text anywhere in the file, including checklist-gen's own header comment and the default cleanup stub — a fully-filled checklist could still read `scaffold (N TODO)`. Now strips comments before counting.
+  - `verify-code` (`forbidden-patterns`): scanning `scanPath: "."` hit a markdown doc's own `node -e "console.log(...)"` CLI-usage example — a real code sample, not leftover debug code. `.md`/`.mdx` files are now excluded from this JS-code-smell check.
+- Tests: 88 → 104 (`taskmaster-model-plan` decision matrix incl. no-subprocess proof; `init-project` seed/patch/idempotency; the three fixes above each got a regression test).
+
 ## [0.5.10] — 2026-07-03
 
 Checklist runner: `config.vars:` and the `- vars:` setup step actually work.
