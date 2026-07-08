@@ -58,21 +58,21 @@ test('init-project: auto-detects java-maven from pom.xml (mvn, not gradle) (#3)'
   });
 });
 
-test('init-project: seeds config.models (sdAuthor inherits, hybridExecutor pinned to sonnet)', () => {
+test('init-project: seeds config.models (sdAuthor inherits, hybridExecutor pinned to sonnet, taskmaster seeded)', () => {
   inTmp(() => {
     maintenance['init-project']({});
     const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
-    assert.deepEqual(cfg.models, { sdAuthor: null, hybridExecutor: 'sonnet' });
+    assert.deepEqual(cfg.models, { sdAuthor: null, hybridExecutor: 'sonnet', taskmaster: { main: 'sonnet', research: 'sonnet' } });
   });
 });
 
-test('init-project: patches config.models into a pre-existing config.json missing it', () => {
+test('init-project: patches config.models into a pre-existing config.json missing it (includes taskmaster)', () => {
   inTmp(() => {
     fs.mkdirSync('.spec-flow', { recursive: true });
     fs.writeFileSync('.spec-flow/config.json', JSON.stringify({ project: 'p', stack: 'node' }));
     maintenance['init-project']({});
     const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
-    assert.deepEqual(cfg.models, { sdAuthor: null, hybridExecutor: 'sonnet' });
+    assert.deepEqual(cfg.models, { sdAuthor: null, hybridExecutor: 'sonnet', taskmaster: { main: 'sonnet', research: 'sonnet' } });
   });
 });
 
@@ -109,5 +109,45 @@ test('doctor: always returns ok with a checks array (reports, never throws)', ()
     assert.equal(r.ok, true);
     assert.ok(Array.isArray(r.data.checks));
     assert.ok(r.data.summary && typeof r.data.summary === 'object');
+  });
+});
+
+// TC-007: fresh project seeds models.taskmaster: {main, research} — no fallback key (FR-009, FR-011)
+test('init-project: seeds models.taskmaster {main,research} on fresh project — no fallback key (TC-007)', () => {
+  inTmp(() => {
+    maintenance['init-project']({});
+    const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
+    assert.deepEqual(cfg.models.taskmaster, { main: 'sonnet', research: 'sonnet' });
+    assert.strictEqual(cfg.models.taskmaster.fallback, undefined);
+  });
+});
+
+// TC-008: existing config missing models.taskmaster block — patched in, sdAuthor/hybridExecutor unchanged (FR-010)
+test('init-project: patches models.taskmaster into existing config missing the block — others unchanged (TC-008)', () => {
+  inTmp(() => {
+    fs.mkdirSync('.spec-flow', { recursive: true });
+    fs.writeFileSync('.spec-flow/config.json', JSON.stringify({
+      project: 'p',
+      models: { sdAuthor: null, hybridExecutor: 'sonnet' },
+    }));
+    maintenance['init-project']({});
+    const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
+    assert.deepEqual(cfg.models.taskmaster, { main: 'sonnet', research: 'sonnet' });
+    assert.strictEqual(cfg.models.sdAuthor, null);
+    assert.strictEqual(cfg.models.hybridExecutor, 'sonnet');
+  });
+});
+
+// TC-009: existing config already has models.taskmaster with custom values — left exactly as-is (FR-010 idempotent)
+test('init-project: leaves models.taskmaster untouched when already present with custom values (TC-009)', () => {
+  inTmp(() => {
+    fs.mkdirSync('.spec-flow', { recursive: true });
+    fs.writeFileSync('.spec-flow/config.json', JSON.stringify({
+      project: 'p',
+      models: { sdAuthor: null, hybridExecutor: 'sonnet', taskmaster: { main: 'opus', research: 'sonnet' } },
+    }));
+    maintenance['init-project']({});
+    const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
+    assert.deepEqual(cfg.models.taskmaster, { main: 'opus', research: 'sonnet' });
   });
 });

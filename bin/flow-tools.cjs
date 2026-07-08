@@ -234,7 +234,12 @@ const commands = {
       } else if (cur) cur.body.push(ln);
     }
     const classify = (t) => {
-      const blob = t.id + '\n' + t.body.join('\n');
+      // Drop full-line comments first — checklist-gen's own scaffold hints (e.g.
+      // "retag [no-verify]") mention both carve-out tags in prose, so scanning
+      // comment text made every scaffolded test misclassify regardless of its
+      // actual tags: line. Only real YAML content should drive classification.
+      const bodyNoComments = t.body.filter((ln) => !/^\s*#/.test(ln)).join('\n');
+      const blob = t.id + '\n' + bodyNoComments;
       // Match the bare token (word-boundary) so BOTH a tags-list entry (`tags: [smoke, no-verify]`)
       // AND a bracketed-name marker (`[no-verify]`) are recognized — same source of truth as
       // lint-checklist (which reads the tags list). Avoids the "mark it in two places" trap.
@@ -1817,6 +1822,12 @@ const commands = {
             if (SKIP_SCAN_DIRS.has(ent.name)) continue;
             walkDir(fullPath, depth + 1);
           } else if (ent.isFile()) {
+            // Skip prose/doc files — forbiddenPatterns (console.log(, debugger;, .only() are
+            // JS code smells; markdown commonly embeds a literal snippet (e.g. a `node -e
+            // "console.log(...)"` CLI example) that legitimately contains the pattern text
+            // without being leftover debug code. Scanning doc prose for source-code smells
+            // produces false positives, not real findings.
+            if (/\.mdx?$/i.test(ent.name)) continue;
             let content;
             try { content = fs.readFileSync(fullPath, 'utf8'); } catch { continue; }
             const lines = content.split(/\r?\n/);
@@ -2133,7 +2144,12 @@ const commands = {
       } else {
         try {
           const clText = fs.readFileSync(checklistPath, 'utf8');
-          const clTodos = (clText.match(/\bTODO\b/g) || []).length;
+          // Strip comments before counting — both full-line ("# Fill each test...") and
+          // trailing ("all: | # TODO: DELETE test rows...") mention "TODO" in scaffold
+          // hint prose, which is not an unfilled test. A `#` starts a comment when it's
+          // at line-start or preceded by whitespace (same rule real YAML uses).
+          const clNoComments = clText.split(/\r?\n/).map((ln) => ln.replace(/(^|\s)#.*$/, '$1')).join('\n');
+          const clTodos = (clNoComments.match(/\bTODO\b/g) || []).length;
           checklistStatus = clTodos > 0 ? `scaffold (${clTodos} TODO)` : 'ready';
         } catch { checklistStatus = 'unreadable'; }
       }
@@ -2198,6 +2214,60 @@ const commands = {
       changesOpenList,
       nextStep,
     });
+  },
+
+  // -----------------------------------------------------------------------
+  // taskmaster-model-plan  --role <main|research>
+  //
+  // Pure decision engine: reads .spec-flow/config.json and .taskmaster/config.json,
+  // compares the configured model override against the current Task Master model,
+  // and returns a decision object. NO subprocess calls, NO network calls.
+  //
+  // Returns one of:
+  //   ok({needsChange: false})                          — configured null/absent/empty OR .taskmaster/config.json missing
+  //   ok({needsChange: false, reason: "already-set"})  — configured === previous
+  //   ok({needsChange: true, configured, previous})     — override needed
+  //   err("INVALID_ROLE: ...")                          — bad --role argument
+  // -----------------------------------------------------------------------
+  'taskmaster-model-plan'(args) {
+    const role = args.role;
+    // Validate role: only 'main' or 'research' are allowed (§12.2 ERR_TM_PLAN_INVALID_ROLE).
+    if (role !== 'main' && role !== 'research') {
+      return err("INVALID_ROLE: must be 'main' or 'research'");
+    }
+
+    // Read .spec-flow/config.json → models.taskmaster.<role>
+    const sfConfig = readJsonSafe(PATHS.config, {}) || {};
+    const taskmasterModels = (sfConfig.models && sfConfig.models.taskmaster) || {};
+    const configured = taskmasterModels[role];
+
+    // FR-001: null, undefined, or empty/whitespace-only string → early return, never read TM config.
+    if (configured == null || String(configured).trim() === '') {
+      return ok({ needsChange: false });
+    }
+
+    // Read .taskmaster/config.json → models.<role>.modelId (FR-005: graceful on missing/unparseable)
+    const tmConfigPath = path.join(process.cwd(), '.taskmaster', 'config.json');
+    let tmConfig;
+    try {
+      const raw = fs.readFileSync(tmConfigPath, 'utf8');
+      tmConfig = JSON.parse(raw);
+    } catch (_e) {
+      // File missing or unparseable → graceful (FR-005)
+      return ok({ needsChange: false });
+    }
+
+    const previous = (tmConfig && tmConfig.models && tmConfig.models[role])
+      ? tmConfig.models[role].modelId
+      : undefined;
+
+    // FR-002: configured === previous → no-op
+    if (configured === previous) {
+      return ok({ needsChange: false, reason: 'already-set' });
+    }
+
+    // FR-003: override needed
+    return ok({ needsChange: true, configured, previous });
   },
 };
 

@@ -385,6 +385,30 @@ test('REGRESSION trace-build: task count is scoped to --feature tag, not master/
   assert.equal(r.data.counts.tasks, 2, 'counts the demo tag (2), not sof-card-network (3) or a sum');
 });
 
+test('REGRESSION verify-code: forbidden-patterns skips .md files (doc snippets legitimately contain the pattern text)', () => {
+  // Pre-fix: scanning scanPath: "." for `console\.log\(` hit a markdown doc's own
+  // `node -e "console.log(...)"` CLI-usage example — a real, correct code sample, not
+  // leftover debug code. Source-code smells must not be checked against prose docs.
+  const dir = tmpProject();
+  const init = run(['init-project', '--stack', 'node'], dir);
+  assert.equal(init.ok, true);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.scanPath = '.';
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  fs.writeFileSync(path.join(dir, 'README.md'), [
+    '# Example',
+    '```bash',
+    'RESULT=$(node -e "console.log(1+1)")',
+    '```',
+    '',
+  ].join('\n'));
+  const r = run(['verify-code'], dir);
+  assert.equal(r.ok, true);
+  const fp = r.data.checks.find((c) => c.name === 'forbidden-patterns');
+  assert.equal(fp.status, 'ok', 'a console.log( inside a .md code sample is not a forbidden-pattern hit');
+});
+
 test('REGRESSION verify-code: unconfigured project → gate "skipped", not "pass"', () => {
   // Pre-fix bug: a no-op gate returned gate:"pass" and read as if the code was
   // verified. With no verify block it must report "skipped" (transparency).
@@ -1176,6 +1200,60 @@ test('#4 checklist-status: recognizes carve-out tags in the tags LIST (not only 
   assert.equal(r.data.counts.scaffold, 0, 'neither miscounted as scaffold');
 });
 
+test('checklist-status: scaffold hint comment mentioning the OTHER carve-out tag does not override the real tags: line', () => {
+  // Pre-fix: classify() scanned the whole body blob including checklist-gen's own
+  // auto-comment ("...retag [no-verify]."), which every live-e2e scaffold carries —
+  // so a genuinely live-e2e test always misclassified as no-verify regardless of its
+  // actual tags: line. Comments must never drive classification, only real YAML content.
+  const dir = tmpProject();
+  initProject(dir);
+  const cl = path.join(dir, '.spec-flow', 'specs', 'demo', 'CHECKLIST.yaml');
+  fs.mkdirSync(path.dirname(cl), { recursive: true });
+  fs.writeFileSync(cl, [
+    'suites:',
+    '  - id: suite-1',
+    '    tests:',
+    '      - id: TC-001',
+    '        name: "event delivery"',
+    '        tags: [regression, live-e2e]',
+    '        # SD Expected Result: ...',
+    '        # If this is a pure unit transform (a util case, no integration), retag [no-verify].',
+    '',
+  ].join('\n'));
+  const r = run(['checklist-status', '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.counts['live-e2e'], 1, 'real tags: line (live-e2e) wins over comment text');
+  assert.equal(r.data.counts['no-verify'], 0, 'comment-only mention of no-verify is ignored');
+});
+
+test('status-report: a fully-filled checklist reads "ready", not "scaffold" from boilerplate TODO mentions', () => {
+  // Pre-fix: checklistStatus counted raw `TODO` occurrences anywhere in the file text,
+  // including checklist-gen's own header comment ("...gates on remaining TODO markers")
+  // and the default cleanup stub ("all: | # TODO: DELETE test rows..."). Neither is an
+  // unfilled test — both are inert once every test itself has a real tag/assertion.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), '# SD: demo\n');
+  fs.writeFileSync(path.join(sdDir, 'CHECKLIST.yaml'), [
+    '# Fill each test before running (lint-checklist.sh gates on remaining TODO markers):',
+    'config: {}',
+    "cleanup:",
+    "  all: | # TODO: DELETE test rows (LIKE 'TEST-%')",
+    'suites:',
+    '  - id: suite-1',
+    '    tests:',
+    '      - id: TC-001',
+    '        name: "fully filled test"',
+    '        tags: [smoke, no-verify]',
+    '',
+  ].join('\n'));
+  const r = run(['status-report', '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.checklist, 'ready', 'boilerplate TODO mentions in comments do not count as scaffold');
+});
+
 test('state-update: writes STATE.md and returns state path, lines, nextStep', () => {
   const dir = tmpProject();
   initProject(dir);
@@ -1392,4 +1470,152 @@ test('task-baseline: partially verified evidence set does NOT baseline (full-cov
   assert.deepEqual(ids, ['1'], 'only the fully-verified task baselines');
   assert.ok(r.data.skipped.some(s => s.id === '2' && /unverified TCs: TC-002/.test(s.reason)),
     'failed TC blocks its task with the exact reason');
+});
+
+// ---------------------------------------------------------------------------
+// taskmaster-model-plan — TC-001 through TC-006 (SD §13.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: create a minimal project with .spec-flow/config.json containing a
+ * given models.taskmaster block and an optional .taskmaster/config.json.
+ */
+function makePlanProject({ sfModels, tmConfig } = {}) {
+  const dir = tmpProject();
+  // Write .spec-flow/config.json with the supplied models block.
+  fs.mkdirSync(path.join(dir, '.spec-flow'), { recursive: true });
+  const cfg = {
+    project: 'test',
+    stack: 'node',
+    models: Object.assign({ sdAuthor: null, hybridExecutor: 'sonnet' }, sfModels ? { taskmaster: sfModels } : {}),
+  };
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'config.json'), JSON.stringify(cfg, null, 2));
+  // Write .taskmaster/config.json when provided.
+  if (tmConfig !== undefined && tmConfig !== null) {
+    fs.mkdirSync(path.join(dir, '.taskmaster'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '.taskmaster', 'config.json'),
+      JSON.stringify(tmConfig, null, 2)
+    );
+  }
+  return dir;
+}
+
+// TC-001: needsChange:true — role main, configured !== previous (FR-003)
+test('taskmaster-model-plan TC-001: needsChange:true when configured opus != previous sonnet (role main)', () => {
+  const dir = makePlanProject({
+    sfModels: { main: 'opus', research: 'sonnet' },
+    tmConfig: { models: { main: { modelId: 'sonnet' }, research: { modelId: 'sonnet' } } },
+  });
+  const r = run(['taskmaster-model-plan', '--role', 'main'], dir);
+  assert.equal(r.ok, true, 'command returns ok');
+  assert.equal(r.data.needsChange, true, 'needsChange is true');
+  assert.equal(r.data.configured, 'opus', 'configured echoes the sf config value');
+  assert.equal(r.data.previous, 'sonnet', 'previous echoes the tm config value');
+});
+
+// TC-006: role research — same logic (FR-003)
+test('taskmaster-model-plan TC-006: needsChange:true for role research (configured opus != previous sonnet)', () => {
+  const dir = makePlanProject({
+    sfModels: { main: 'sonnet', research: 'opus' },
+    tmConfig: { models: { main: { modelId: 'sonnet' }, research: { modelId: 'sonnet' } } },
+  });
+  const r = run(['taskmaster-model-plan', '--role', 'research'], dir);
+  assert.equal(r.ok, true, 'command returns ok');
+  assert.equal(r.data.needsChange, true, 'needsChange is true');
+  assert.equal(r.data.configured, 'opus', 'configured is opus');
+  assert.equal(r.data.previous, 'sonnet', 'previous is sonnet');
+});
+
+// TC-002: needsChange:false + reason:"already-set" (FR-002)
+test('taskmaster-model-plan TC-002: needsChange:false + reason already-set when configured === previous', () => {
+  const dir = makePlanProject({
+    sfModels: { main: 'opus', research: 'sonnet' },
+    tmConfig: { models: { main: { modelId: 'opus' }, research: { modelId: 'sonnet' } } },
+  });
+  const r = run(['taskmaster-model-plan', '--role', 'main'], dir);
+  assert.equal(r.ok, true, 'command returns ok');
+  assert.equal(r.data.needsChange, false, 'needsChange is false');
+  assert.equal(r.data.reason, 'already-set', 'reason is already-set');
+});
+
+// TC-003: needsChange:false for null / absent / empty-string configured — must NOT read tm config (FR-001)
+test('taskmaster-model-plan TC-003a: needsChange:false when configured is null (no tm read)', () => {
+  // No .taskmaster/config.json written — if the command tried to read it, it would
+  // throw/fail because the directory does not exist. Clean pass proves early return.
+  const dir = makePlanProject({ sfModels: { main: null, research: 'sonnet' } });
+  const r = run(['taskmaster-model-plan', '--role', 'main'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.needsChange, false);
+  assert.equal(r.data.reason, undefined, 'no reason field when null-configured');
+});
+
+test('taskmaster-model-plan TC-003b: needsChange:false when models.taskmaster block is absent (no tm read)', () => {
+  // Config has no models.taskmaster key at all.
+  const dir = makePlanProject({ sfModels: undefined });
+  const r = run(['taskmaster-model-plan', '--role', 'main'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.needsChange, false);
+});
+
+test('taskmaster-model-plan TC-003c: needsChange:false when configured is empty string (no tm read)', () => {
+  const dir = makePlanProject({ sfModels: { main: '', research: 'sonnet' } });
+  const r = run(['taskmaster-model-plan', '--role', 'main'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.needsChange, false);
+});
+
+// TC-004: graceful when .taskmaster/config.json is missing (FR-005)
+test('taskmaster-model-plan TC-004: needsChange:false and no throw when .taskmaster/config.json is absent', () => {
+  // configured is non-empty but .taskmaster/config.json does not exist.
+  const dir = makePlanProject({
+    sfModels: { main: 'opus', research: 'sonnet' },
+    // tmConfig intentionally omitted (undefined) → file not written
+  });
+  const r = run(['taskmaster-model-plan', '--role', 'main'], dir);
+  assert.equal(r.ok, true, 'never throws even when tm config missing');
+  assert.equal(r.data.needsChange, false, 'graceful needsChange:false');
+});
+
+// TC-005: no subprocess spawned — command succeeds without task-master on PATH (FR-004)
+test('taskmaster-model-plan TC-005: no subprocess — succeeds when PATH has no task-master binary', () => {
+  // Override PATH to an empty temp dir (no task-master, no npx, etc.).
+  // A subprocess call would fail with ENOENT or hang; a pure fs-based implementation
+  // ignores PATH entirely and succeeds cleanly.
+  // We use process.execPath (absolute node path) so overriding PATH does not break the
+  // node invocation itself — only external tools like task-master/npx become unavailable.
+  const dir = makePlanProject({
+    sfModels: { main: 'opus', research: 'sonnet' },
+    tmConfig: { models: { main: { modelId: 'sonnet' }, research: { modelId: 'sonnet' } } },
+  });
+  const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-empty-bin-'));
+  let out;
+  try {
+    out = execFileSync(
+      process.execPath,
+      [ENGINE, 'taskmaster-model-plan', '--role', 'main'],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: emptyBin } }
+    );
+  } catch (e) {
+    if (e.stdout) out = String(e.stdout);
+    else throw e;
+  }
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.ok, true, 'command succeeds without task-master on PATH (no subprocess)');
+  assert.equal(r.data.needsChange, true, 'result is correct despite empty PATH');
+});
+
+// Invalid --role → INVALID_ROLE error (§12.2)
+test('taskmaster-model-plan: invalid --role value returns INVALID_ROLE error', () => {
+  const dir = makePlanProject({ sfModels: { main: 'opus', research: 'sonnet' } });
+  const r = run(['taskmaster-model-plan', '--role', 'fallback'], dir);
+  assert.equal(r.ok, false, 'invalid role returns ok:false');
+  assert.match(r.error, /INVALID_ROLE/, 'error code is INVALID_ROLE');
+});
+
+test('taskmaster-model-plan: missing --role returns INVALID_ROLE error', () => {
+  const dir = makePlanProject({ sfModels: { main: 'opus', research: 'sonnet' } });
+  const r = run(['taskmaster-model-plan'], dir);
+  assert.equal(r.ok, false, 'missing role returns ok:false');
+  assert.match(r.error, /INVALID_ROLE/, 'error code is INVALID_ROLE');
 });

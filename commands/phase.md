@@ -42,13 +42,40 @@ If `/sf:phase` was invoked with **no feature arg** (common on a fresh session), 
 - **`tasks` non-null / total > 0 → ALREADY SEEDED.** Do **NOT** run `parse-prd`. Run `use-tag <feature>` (so MCP state ops bind to the right tag), then go straight to **Step 0.5 / Routing**. (`nextStep` will read "`/sf:phase` — N pending · M wip …".)
 - **`tasks` null / total 0 → NOT seeded.** Seed now (below). (`nextStep` will read "it seeds tasks (parse-prd) then implements.")
 
-When not seeded, **the agent seeds them itself** (do NOT hand this to the user) — CLI AI ops, same as every other AI op in this flow; the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing does not block it:
-```
+When not seeded, **the agent seeds them itself** (do NOT hand this to the user) — CLI AI ops, same as every other AI op in this flow; the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing does not block it. Before each AI op, check for a model override (`models.taskmaster` in `.spec-flow/config.json`); if `needsChange: true`, set the model, run the op, then restore — **run each block below as one combined shell command, not split across separate Bash tool calls, so the `trap` stays active for the AI op**.
+
+`parse-prd` (role `main`):
+```bash
+DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role main)
+NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
+if [ "$NEEDS_CHANGE" = "true" ]; then
+  CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
+  PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
+  npx -y -p task-master-ai@0.43.1 task-master models --set-main "$CONFIGURED" --claude-code
+  trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '$PREVIOUS' --claude-code" EXIT
+fi
 npx -y -p task-master-ai@0.43.1 task-master parse-prd --input .spec-flow/specs/<feature>/SD.md --tag <feature>
+```
+
+`analyze-complexity` (role `research`):
+```bash
+DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role research)
+NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
+if [ "$NEEDS_CHANGE" = "true" ]; then
+  CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
+  PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
+  npx -y -p task-master-ai@0.43.1 task-master models --set-research "$CONFIGURED" --claude-code
+  trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '$PREVIOUS' --claude-code" EXIT
+fi
 npx -y -p task-master-ai@0.43.1 task-master analyze-complexity --tag <feature> --research
+```
+
+Then run the state op (no model involved) separately:
+```
 npx -y -p task-master-ai@0.43.1 task-master use-tag <feature>
 ```
-Use a **per-feature `--tag`** so this feature's tasks stay isolated. Only if the CLI genuinely errors on a missing provider/key do you ask the user to run these two lines in their terminal.
+
+Use a **per-feature `--tag`** so this feature's tasks stay isolated. Only if the CLI genuinely errors on a missing provider/key do you ask the user to run these in their terminal.
 
 > **CRITICAL — set the global current tag (`use-tag`).** Task Master MCP state ops (`next_task`, `set_task_status`, `update-subtask`) bind to the **global `currentTag`** in `tasks.json` and may **ignore** a per-call `tag:` param. If `currentTag` still points at a prior feature, every state op silently operates on the wrong tag — executors fail to log ("wrong tag … requires parentId.subtaskId"), and trace counts read another feature's tasks. So **always run `use-tag <feature>` right after seeding** (and again on resume if you switched features) so `currentTag` == this feature. The engine's `trace-build`/`trace-link`/`state-update`/`status-report` are already tag-scoped via `--feature` and do not depend on `currentTag`.
 
@@ -68,8 +95,32 @@ node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs route --sd .spec-flow/specs/<featu
 
 Returns per-FR complexity scores (1–10):
 - **1-3 → fast**: skip research/plan; go straight to executor.
-- **4-7 → expand**: CLI `npx -y -p task-master-ai@0.43.1 task-master expand --id=<id>` (AI op — CLI, not MCP), then run each subtask as fast.
-- **8-10 → deep**: CLI `npx -y -p task-master-ai@0.43.1 task-master research "<query>"` first if the task touches an external integration (pass the SD §14 risk row as context), then spawn **hybrid-executor** with extra planning notes.
+- **4-7 → expand**: AI op (CLI, not MCP) — apply the `taskmaster-model-plan` override (role `main`) before running:
+  ```bash
+  DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role main)
+  NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
+  if [ "$NEEDS_CHANGE" = "true" ]; then
+    CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
+    PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
+    npx -y -p task-master-ai@0.43.1 task-master models --set-main "$CONFIGURED" --claude-code
+    trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '$PREVIOUS' --claude-code" EXIT
+  fi
+  npx -y -p task-master-ai@0.43.1 task-master expand --id=<id>
+  ```
+  Then run each subtask as fast.
+- **8-10 → deep**: if the task touches an external integration, run the research AI op first (pass the SD §14 risk row as context) with the override (role `research`):
+  ```bash
+  DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role research)
+  NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
+  if [ "$NEEDS_CHANGE" = "true" ]; then
+    CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
+    PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
+    npx -y -p task-master-ai@0.43.1 task-master models --set-research "$CONFIGURED" --claude-code
+    trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '$PREVIOUS' --claude-code" EXIT
+  fi
+  npx -y -p task-master-ai@0.43.1 task-master research "<query>"
+  ```
+  Then spawn **hybrid-executor** with extra planning notes.
 
 ## Per-task loop
 
@@ -87,9 +138,23 @@ Returns per-FR complexity scores (1–10):
    - For a chore task: "chore — RED phase skipped" is the expected note. Accept it.
 
 3. **Code + log**
+
+   `update-task --append` (role `main`) — run as one combined shell command so the `trap` stays active:
+   ```bash
+   DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role main)
+   NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
+   if [ "$NEEDS_CHANGE" = "true" ]; then
+     CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
+     PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
+     npx -y -p task-master-ai@0.43.1 task-master models --set-main "$CONFIGURED" --claude-code
+     trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '$PREVIOUS' --claude-code" EXIT
+   fi
+   npx -y -p task-master-ai@0.43.1 task-master update-task --id=<id> --append --prompt="<files/approach/result>"
    ```
-   npx -y -p task-master-ai@0.43.1 task-master update-task --id=<id> --append --prompt="<files/approach/result>"   # AI op → CLI
-   mcp__task-master-ai__set_task_status --id=<id> --status=review                                                  # state op → MCP
+
+   Then, separately (state op — no model involved, do NOT fold into the bash block above):
+   ```
+   mcp__task-master-ai__set_task_status --id=<id> --status=review
    ```
    Use **`update-task --append`** (logs onto the task itself), NOT `update-subtask --id=<id>`: `update-subtask` requires a `parent.sub` id and fails for any task that was not expanded into subtasks (the common solo/fast-path case — "requires parentId.subtaskId"). `--append` works for both expanded and un-expanded tasks.
    **Cost note:** `update-task --append` is an AI op (one CLI call per task — slow over many tasks). It is **optional human-readable history**, not the source of truth: the deterministic record is `trace-link` (files touched — a zero-AI state op) + `state-update` + the TM status. If per-task AI latency is a problem, **batch one note at task close** or skip it; do NOT skip `trace-link`/`set_task_status` (those are the disk facts `/sf:status` reads).
