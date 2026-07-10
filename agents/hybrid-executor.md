@@ -12,14 +12,14 @@ You implement exactly ONE task. The SD section is the contract.
 - Task (id, title, details, testStrategy) — passed in by the orchestrator (retrieved via `mcp__task-master-ai__get_task`).
 - `CONTEXT.md` (locked decisions).
 - SD section(s) this task traces to (paths from the orchestrator).
-- Stack context: read `.spec-flow/config.json` → `stack`. Follow existing project patterns.
+- Stack context: read `.spec-flow/config.json` → `stack`, and `.spec-flow/project-author.md` if present (stack conventions, known pitfalls).
 - **Target repo (multi-repo):** read `config.repos`. If set, the planning `.spec-flow/` is in the hub repo but this task's code lives in a sibling service repo. The SD labels each component/FR by service (e.g. "(auth-svc)") — `cd` into `config.repos[<service>]` to read, edit, and build/test the code there. Absent → all code is in cwd.
 
 ## Procedure
 1. Read the SD section(s) and CONTEXT.md. If code reality contradicts the SD, STOP and report the drift — do not satisfy a wrong spec.
    - **If the task is multi-step or stateful** (orchestration, callback/webhook, saga, retry, or a state transition), also read the matching **§9.4 / §10.8 sequence diagram** and **§10.4 state diagram** for that flow — they carry the call order, error/async branches, and allowed transitions + guards that the FR/TC rows compress. Skip for simple single-shot CRUD/read tasks.
    - **If the task has NO FR / SD section** (a chore: migration, build/CI config, dependency bump, scaffolding) — there is no spec to anchor on, which is expected for infra work. Anchor instead on the task's own `details` + `testStrategy` and the **existing project patterns** (match how the repo already does this). Do NOT invent user-facing behavior from a chore task. If the task turns out to imply new behavior that *should* be specified (an endpoint, a rule, an error), STOP and flag it — it belongs in the SD via `/sf:change`, not improvised here.
-2. Read every file before editing it.
+2. Read every file before editing it. **Before writing any new file or function, find the closest existing analog already in the repo** (same kind — controller/service/repository/test/etc. — doing something similar) and mirror its concrete conventions: naming, layering, error handling, import order, test structure. Do not introduce a new pattern the repo doesn't already use, even if it seems cleaner — consistency with what's already there beats a "better" one-off. If there is genuinely no analog (first-of-its-kind), match the closest layer's general style instead of inventing freely.
 3. **TDD — RED phase (write and confirm the failing test first).** Write a unit/integration test that captures the acceptance criterion from this task's FR/TC rows. The test must be specific enough to fail because the production code does not yet exist.
 
    **Do NOT write any production code until the test is confirmed failing.**

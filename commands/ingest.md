@@ -103,31 +103,19 @@ With a file path given, skip Mode 0 and go straight to the Steps.
 8. **Gate — SD approval is the human control point; do NOT seed tasks yet**
    Count remaining `TODO:MANUAL-REVIEW` markers. Report: SD path, design type, section coverage (FR count, TC count, unresolved TODOs), and the full list of each TODO location and reason. **Refuse to call `parse_prd` while any `TODO:MANUAL-REVIEW` remains.** Then **STOP and hand back to the human** to review + get leader approval — this is the one gate that is theirs.
 
-   **After the human approves, the rest is the AGENT's job — not a list of CLI chores for the user.** When you run `/sf:checklist` (scaffolds `CHECKLIST.yaml`) and then `/sf:phase`, the agent seeds tasks itself with a **per-feature `--tag`** (isolates this feature's tasks from any other feature/bug/change). Before each AI op, check for a model override (`models.taskmaster` in `.spec-flow/config.json`); if `needsChange: true`, set the model, run the op, then restore — **run each block below as one combined shell command, not split across separate Bash tool calls, so the `trap` stays active for the AI op**.
+   **After the human approves, the rest is the AGENT's job — not a list of CLI chores for the user.** When you run `/sf:checklist` (scaffolds `CHECKLIST.yaml`) and then `/sf:phase`, the agent seeds tasks itself with a **per-feature `--tag`** (isolates this feature's tasks from any other feature/bug/change). Before each AI op, run `taskmaster-model-plan --role <role>` and read the returned JSON yourself — no need to re-parse it. If `needsChange: false`, run the AI op directly. If `needsChange: true`, substitute `configured`/`previous` as literal values into one combined shell block (set → op → `trap` restore, kept in one Bash call so the `trap` stays active for the AI op):
 
    `parse-prd` (role `main`):
    ```bash
-   DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role main)
-   NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
-   if [ "$NEEDS_CHANGE" = "true" ]; then
-     CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
-     PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
-     npx -y -p task-master-ai@0.43.1 task-master models --set-main "$CONFIGURED" --claude-code
-     trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '$PREVIOUS' --claude-code" EXIT
-   fi
+   npx -y -p task-master-ai@0.43.1 task-master models --set-main "<configured>" --claude-code
+   trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '<previous>' --claude-code" EXIT
    npx -y -p task-master-ai@0.43.1 task-master parse-prd --input .spec-flow/specs/<feature>/SD.md --tag <feature>
    ```
 
    `analyze-complexity` (role `research`):
    ```bash
-   DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role research)
-   NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
-   if [ "$NEEDS_CHANGE" = "true" ]; then
-     CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
-     PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
-     npx -y -p task-master-ai@0.43.1 task-master models --set-research "$CONFIGURED" --claude-code
-     trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '$PREVIOUS' --claude-code" EXIT
-   fi
+   npx -y -p task-master-ai@0.43.1 task-master models --set-research "<configured>" --claude-code
+   trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '<previous>' --claude-code" EXIT
    npx -y -p task-master-ai@0.43.1 task-master analyze-complexity --tag <feature> --research
    ```
    **The agent CAN run these** (same as every other CLI AI op in `/sf:phase`): the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing on the Bash PATH does *not* mean it can't run. Use the **CLI** form above (reads `.taskmaster/config.json` fresh); the MCP `parse_prd` tool can fail on a stale-cached provider (see the Task Master note in `/sf:phase`). Only if the CLI genuinely errors on a missing provider/key do you ask the user to run it in their terminal.

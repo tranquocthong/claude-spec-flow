@@ -42,31 +42,19 @@ If `/sf:phase` was invoked with **no feature arg** (common on a fresh session), 
 - **`tasks` non-null / total > 0 → ALREADY SEEDED.** Do **NOT** run `parse-prd`. Run `use-tag <feature>` (so MCP state ops bind to the right tag), then go straight to **Step 0.5 / Routing**. (`nextStep` will read "`/sf:phase` — N pending · M wip …".)
 - **`tasks` null / total 0 → NOT seeded.** Seed now (below). (`nextStep` will read "it seeds tasks (parse-prd) then implements.")
 
-When not seeded, **the agent seeds them itself** (do NOT hand this to the user) — CLI AI ops, same as every other AI op in this flow; the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing does not block it. Before each AI op, check for a model override (`models.taskmaster` in `.spec-flow/config.json`); if `needsChange: true`, set the model, run the op, then restore — **run each block below as one combined shell command, not split across separate Bash tool calls, so the `trap` stays active for the AI op**.
+When not seeded, **the agent seeds them itself** (do NOT hand this to the user) — CLI AI ops, same as every other AI op in this flow; the keyless `claude-code` provider reaches the Claude binary via `CLAUDE_CODE_EXECPATH` (set by the host), so `which claude` printing nothing does not block it. Before each AI op, run `taskmaster-model-plan --role <role>` and read the returned JSON yourself — no need to re-parse it. If `needsChange: false`, run the AI op directly. If `needsChange: true`, substitute `configured`/`previous` as literal values into one combined shell block (set → op → `trap` restore, kept in one Bash call so the `trap` stays active for the AI op):
 
 `parse-prd` (role `main`):
 ```bash
-DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role main)
-NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
-if [ "$NEEDS_CHANGE" = "true" ]; then
-  CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
-  PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
-  npx -y -p task-master-ai@0.43.1 task-master models --set-main "$CONFIGURED" --claude-code
-  trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '$PREVIOUS' --claude-code" EXIT
-fi
+npx -y -p task-master-ai@0.43.1 task-master models --set-main "<configured>" --claude-code
+trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '<previous>' --claude-code" EXIT
 npx -y -p task-master-ai@0.43.1 task-master parse-prd --input .spec-flow/specs/<feature>/SD.md --tag <feature>
 ```
 
 `analyze-complexity` (role `research`):
 ```bash
-DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role research)
-NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
-if [ "$NEEDS_CHANGE" = "true" ]; then
-  CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
-  PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
-  npx -y -p task-master-ai@0.43.1 task-master models --set-research "$CONFIGURED" --claude-code
-  trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '$PREVIOUS' --claude-code" EXIT
-fi
+npx -y -p task-master-ai@0.43.1 task-master models --set-research "<configured>" --claude-code
+trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '<previous>' --claude-code" EXIT
 npx -y -p task-master-ai@0.43.1 task-master analyze-complexity --tag <feature> --research
 ```
 
@@ -95,29 +83,17 @@ node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs route --sd .spec-flow/specs/<featu
 
 Returns per-FR complexity scores (1–10):
 - **1-3 → fast**: skip research/plan; go straight to executor.
-- **4-7 → expand**: AI op (CLI, not MCP) — apply the `taskmaster-model-plan` override (role `main`) before running:
+- **4-7 → expand**: AI op (CLI, not MCP) — apply the `taskmaster-model-plan` override (role `main`) before running: read the JSON from `taskmaster-model-plan --role main`; if `needsChange: true`, substitute `configured`/`previous` as literal values below (else run the AI op directly):
   ```bash
-  DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role main)
-  NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
-  if [ "$NEEDS_CHANGE" = "true" ]; then
-    CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
-    PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
-    npx -y -p task-master-ai@0.43.1 task-master models --set-main "$CONFIGURED" --claude-code
-    trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '$PREVIOUS' --claude-code" EXIT
-  fi
+  npx -y -p task-master-ai@0.43.1 task-master models --set-main "<configured>" --claude-code
+  trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '<previous>' --claude-code" EXIT
   npx -y -p task-master-ai@0.43.1 task-master expand --id=<id>
   ```
   Then run each subtask as fast.
-- **8-10 → deep**: if the task touches an external integration, run the research AI op first (pass the SD §14 risk row as context) with the override (role `research`):
+- **8-10 → deep**: if the task touches an external integration, run the research AI op first (pass the SD §14 risk row as context) with the override (role `research`) — read the JSON from `taskmaster-model-plan --role research`; if `needsChange: true`, substitute `configured`/`previous` as literal values below (else run the AI op directly):
   ```bash
-  DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role research)
-  NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
-  if [ "$NEEDS_CHANGE" = "true" ]; then
-    CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
-    PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
-    npx -y -p task-master-ai@0.43.1 task-master models --set-research "$CONFIGURED" --claude-code
-    trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '$PREVIOUS' --claude-code" EXIT
-  fi
+  npx -y -p task-master-ai@0.43.1 task-master models --set-research "<configured>" --claude-code
+  trap "npx -y -p task-master-ai@0.43.1 task-master models --set-research '<previous>' --claude-code" EXIT
   npx -y -p task-master-ai@0.43.1 task-master research "<query>"
   ```
   Then spawn **hybrid-executor** with extra planning notes.

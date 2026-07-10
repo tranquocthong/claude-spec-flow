@@ -2,6 +2,14 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.12] — 2026-07-10
+
+Two pattern-consistency fixes found while auditing `0.5.11`'s own diff against project conventions.
+
+- **`commands/ingest.md` / `commands/phase.md`**: the `taskmaster-model-plan` override blocks (5 call sites: `parse-prd`, `analyze-complexity`, `expand`, `research`, `update-task`) each re-parsed the plan's JSON via three chained `node -e "JSON.parse(...)"` calls to pull `needsChange`/`configured`/`previous` into shell variables — the only place in the entire command set that shells out to parse a `flow-tools.cjs` result instead of having the agent read the JSON directly. Removed all 15 `node -e` calls; the agent now reads the plan's JSON itself and substitutes `configured`/`previous` as literal values into the (still `trap`-guarded) set → op → restore block.
+- **`agents/hybrid-executor.md`**: the only guidance for matching the target project's existing code conventions was one generic line ("Follow existing project patterns" / "Match surrounding code style") — no concrete action, unlike `sd-author.md`'s error-code rule ("grep the codebase for existing error enums and mirror their shape"). Added a required step: before writing any new file or function, find the closest existing analog already in the repo (same kind — controller/service/repository/test) and mirror its concrete conventions (naming, layering, error handling, import order, test structure); also now reads `project-author.md` for stack conventions, not just `config.json → stack`.
+- No behavior change to `taskmaster-model-plan` itself or its test suite — this release only touches how the command docs and the executor agent are worded. Tests: 104 (unchanged).
+
 ## [0.5.11] — 2026-07-08
 
 `config.json → models.taskmaster` — project-scoped model override for Task Master's own CLI (`parse-prd`, `analyze-complexity`, `expand`, `research`, `update-task`), not just Agent-tool spawns.
