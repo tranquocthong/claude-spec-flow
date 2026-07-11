@@ -2,6 +2,13 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.13] — 2026-07-11
+
+Follow-up to `0.5.12`: one `node -e` JSON re-parse site was missed.
+
+- **`commands/phase.md`**: the `update-task --append` override block (Per-task loop, step 3) still chained two `node -e "JSON.parse(...)"` calls to pull `configured`/`previous` — the grep pass for `0.5.12` covered the other 4 call sites (`parse-prd` x2, `analyze-complexity` x2, `expand`, `research`) but missed this one. Same fix applied: the agent reads `taskmaster-model-plan`'s JSON directly and substitutes `configured`/`previous` as literal values into the `trap`-guarded block. Verified via full-repo grep — zero `node -e "console.log(JSON.parse` sites remain.
+- No behavior change. Tests: 104 (unchanged).
+
 ## [0.5.12] — 2026-07-10
 
 Two pattern-consistency fixes found while auditing `0.5.11`'s own diff against project conventions.

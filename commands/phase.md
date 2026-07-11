@@ -115,16 +115,10 @@ Returns per-FR complexity scores (1–10):
 
 3. **Code + log**
 
-   `update-task --append` (role `main`) — run as one combined shell command so the `trap` stays active:
+   `update-task --append` (role `main`) — read the JSON from `taskmaster-model-plan --role main`; if `needsChange: true`, substitute `configured`/`previous` as literal values below and run as one combined shell command so the `trap` stays active (else run the AI op directly):
    ```bash
-   DECISION=$(node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-plan --role main)
-   NEEDS_CHANGE=$(node -e "console.log((JSON.parse(process.argv[1]).data||{}).needsChange||false)" "$DECISION")
-   if [ "$NEEDS_CHANGE" = "true" ]; then
-     CONFIGURED=$(node -e "console.log(JSON.parse(process.argv[1]).data.configured)" "$DECISION")
-     PREVIOUS=$(node -e "console.log(JSON.parse(process.argv[1]).data.previous)" "$DECISION")
-     npx -y -p task-master-ai@0.43.1 task-master models --set-main "$CONFIGURED" --claude-code
-     trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '$PREVIOUS' --claude-code" EXIT
-   fi
+   npx -y -p task-master-ai@0.43.1 task-master models --set-main "<configured>" --claude-code
+   trap "npx -y -p task-master-ai@0.43.1 task-master models --set-main '<previous>' --claude-code" EXIT
    npx -y -p task-master-ai@0.43.1 task-master update-task --id=<id> --append --prompt="<files/approach/result>"
    ```
 
