@@ -11,7 +11,7 @@
  *
  * Commands: init, srs-snapshot, sd-skeleton, route, checklist-gen, trace-build, trace-impact,
  *           trace-repos, trace-link, srs-diff, state-update, verify-collect, verify-code, wave-plan,
- *           task-baseline,
+ *           task-baseline, taskmaster-model-plan, taskmaster-model-check,
  *           epic-new, epic-list, bug-new, bug-list, branch-ensure,
  *           learn, doctor, status-report
  */
@@ -1690,9 +1690,65 @@ const commands = {
       }
     }
 
+    // --- per-task test scoping (opt-in via --task/--files) ------------------
+    // Running the FULL suite on every task close is the single biggest cost in
+    // a multi-task phase. When the caller identifies which files THIS task
+    // touched, scope the "tests" check to just their test files instead — the
+    // full suite still runs, but once, at phase close-out (regression sweep).
+    // Backward compatible: no --task/--files → unscoped, exactly the old behavior.
+    const rawFilesArg = (typeof args.files === 'string' && args.files.trim()) ? args.files.split(',').map(s => s.trim()).filter(Boolean) : [];
+    let taskFiles = [...rawFilesArg];
+    if (args.task && vcFeature) {
+      const flPath = fileLinksPathFor(vcFeature);
+      const links = (readJsonSafe(flPath, { links: [] }).links || []).filter(l => String(l.task) === String(args.task));
+      taskFiles.push(...links.map(l => l.file));
+    }
+    taskFiles = [...new Set(taskFiles)];
+
+    // Group scoping files by which repo root they belong to (multi-repo files are
+    // stored "<repo>/<path>" by trace-link; single-repo files are bare paths).
+    const scopeFilesByRoot = new Map(); // key: rp.name || '' -> string[] (root-relative)
+    for (const f of taskFiles) {
+      const rootMatch = roots.find(r => r.name && f.startsWith(r.name + '/'));
+      const key = rootMatch ? rootMatch.name : '';
+      const rel = rootMatch ? f.slice(rootMatch.name.length + 1) : f;
+      if (!scopeFilesByRoot.has(key)) scopeFilesByRoot.set(key, []);
+      scopeFilesByRoot.get(key).push(rel);
+    }
+
+    // Java (Gradle/Maven): "src/test/(java|kotlin)/a/b/CFoo.java" -> FQCN "a.b.CFoo".
+    const toJavaFqcn = (relPath) => {
+      const m = String(relPath).replace(/\\/g, '/').match(/(?:^|\/)src\/test\/(?:java|kotlin)\/(.+)\.(?:java|kt)$/);
+      return m ? m[1].replace(/\//g, '.') : null;
+    };
+
+    // Build a scoped test command for one root, or null if scoping isn't possible
+    // (no matching test files, or the stack has no known filter syntax) — caller
+    // falls back to the full, unscoped testCommand.
+    const buildScopedTestCommand = (rootKey) => {
+      const files = scopeFilesByRoot.get(rootKey) || [];
+      if (!files.length) return null;
+      if (cfg.stack === 'java-spring') {
+        const fqcns = files.map(toJavaFqcn).filter(Boolean);
+        if (!fqcns.length) return null;
+        return { command: `${testCommand} ${fqcns.map(f => `--tests "${f}"`).join(' ')}`, targets: fqcns };
+      }
+      if (cfg.stack === 'java-maven') {
+        const fqcns = files.map(toJavaFqcn).filter(Boolean);
+        if (!fqcns.length) return null;
+        return { command: `${testCommand} -Dtest=${fqcns.join(',')}`, targets: fqcns };
+      }
+      // Other stacks: no validated filter syntax yet — scope by explicit opt-in
+      // only (config.verify.taskTestCommand, a template with a {files} placeholder).
+      if (verifyCfg.taskTestCommand) {
+        return { command: String(verifyCfg.taskTestCommand).replace('{files}', files.map(f => `"${f}"`).join(' ')), targets: files };
+      }
+      return null;
+    };
+
     // Build the check list for ONE repo root. `rootDir` scopes both the test/
     // coverage commands' cwd and the forbidden/secret filesystem scans.
-    const runChecksInRoot = (rootDir) => {
+    const runChecksInRoot = (rootDir, rootKey) => {
       // Resolve scanPath per root: explicit → src if exists → '.'
       let scanPath = rawScanPath || null;
       if (!scanPath) {
@@ -1702,6 +1758,9 @@ const commands = {
       const checks = [];
       let testOutput = '';
 
+      const scoped = buildScopedTestCommand(rootKey);
+      const effectiveTestCommand = scoped ? scoped.command : testCommand;
+
     // ---- a. tests ---------------------------------------------------------
     if (!testCommand) {
       checks.push(makeCheck('tests', 'skipped', 'testCommand not set', null));
@@ -1710,7 +1769,7 @@ const commands = {
       let testDetail = '';
       let testFix = null;
       try {
-        const result = spawnSync(testCommand, {
+        const result = spawnSync(effectiveTestCommand, {
           shell: true,
           cwd: rootDir,
           timeout: 600000,
@@ -1720,30 +1779,31 @@ const commands = {
         const combined = (result.stdout || '') + (result.stderr || '');
         testOutput = combined;
         const exitCode = result.status;
+        const scopeTag = scoped ? ` [scoped to ${scoped.targets.length} test(s): ${scoped.targets.join(', ')}]` : '';
         if (result.error) {
           // spawn-level error (command not found, timeout, etc.)
           testStatus = 'fail';
           testDetail = `Command error: ${result.error.message}`;
-          testFix = `Check testCommand in .spec-flow/config.json: "${testCommand}"`;
+          testFix = `Check testCommand in .spec-flow/config.json: "${effectiveTestCommand}"`;
         } else if (expectFail) {
           // RED-phase: test must fail before production code exists
           if (exitCode !== 0) {
             testStatus = 'ok';
-            testDetail = `RED confirmed — test fails (exit ${exitCode}). Implement now.`;
+            testDetail = `RED confirmed — test fails (exit ${exitCode}).${scopeTag} Implement now.`;
           } else {
             testStatus = 'fail';
-            testDetail = 'RED not confirmed — tests pass (exit 0) before any production code was written. The test is trivially green or the behavior already exists.';
+            testDetail = `RED not confirmed — tests pass (exit 0) before any production code was written.${scopeTag} The test is trivially green or the behavior already exists.`;
             testFix = 'Write a more specific test that exercises the new behavior. Check: is this FR already implemented?';
           }
         } else if (exitCode !== 0) {
           testStatus = 'fail';
           const lines = combined.split(/\r?\n/).filter(Boolean);
           const tail = lines.slice(-15).join('\n');
-          testDetail = `Exit ${exitCode}. Last output:\n${tail}`;
-          testFix = `Fix failing tests before proceeding. Command: ${testCommand}`;
+          testDetail = `Exit ${exitCode}.${scopeTag} Last output:\n${tail}`;
+          testFix = `Fix failing tests before proceeding. Command: ${effectiveTestCommand}`;
         } else {
           testStatus = 'ok';
-          testDetail = `Command exited 0: ${testCommand}`;
+          testDetail = `Command exited 0: ${effectiveTestCommand}${scopeTag}`;
         }
       } catch (e) {
         testStatus = 'fail';
@@ -1751,6 +1811,7 @@ const commands = {
         testFix = `Check testCommand in .spec-flow/config.json`;
       }
       checks.push(makeCheck('tests', testStatus, testDetail, testFix));
+      if (scoped) checks[checks.length - 1].scoped = true;
     }
     // RED-phase: skip implementation-phase checks (production code doesn't exist yet)
     if (expectFail) {
@@ -1936,7 +1997,7 @@ const commands = {
     // with its repo so a failing check is traceable to the right service.
     const checks = [];
     for (const rp of scopedRoots) {
-      const got = runChecksInRoot(rp.root);
+      const got = runChecksInRoot(rp.root, rp.name || '');
       if (rp.name) got.forEach((c) => { c.name = `[${rp.name}] ${c.name}`; c.repo = rp.name; });
       checks.push(...got);
     }
@@ -1952,6 +2013,11 @@ const commands = {
 
     const result = { checks, summary, gate, repos: scopedRoots.map((r) => r.name).filter(Boolean), scope: scopeNote };
     if (scopeWarnings.length) result.scopeWarnings = scopeWarnings;
+    const testScoped = checks.some((c) => c.scoped);
+    result.testsScoped = testScoped;
+    if (!testScoped && taskFiles.length) {
+      result.scopeNoteTests = 'requested test scoping (--task/--files) but could not derive a filter for this stack/these files — ran the full suite.';
+    }
     return ok(result);
   },
 
@@ -2268,6 +2334,58 @@ const commands = {
 
     // FR-003: override needed
     return ok({ needsChange: true, configured, previous });
+  },
+
+  // Preflight: does every Task Master role (main/research/fallback) have what it
+  // needs to actually run? A role on a keyed provider (anthropic, perplexity, ...)
+  // with no matching key in env/.env will fail (or silently no-op as "fallback")
+  // the first time an AI-op reaches it — this catches that BEFORE the per-task
+  // loop burns a task on it. `claude-code`/`ollama` are keyless — never flagged.
+  'taskmaster-model-check'() {
+    const KEY_ENV = {
+      anthropic: 'ANTHROPIC_API_KEY',
+      perplexity: 'PERPLEXITY_API_KEY',
+      openai: 'OPENAI_API_KEY',
+      google: 'GOOGLE_API_KEY',
+      groq: 'GROQ_API_KEY',
+      xai: 'XAI_API_KEY',
+      openrouter: 'OPENROUTER_API_KEY',
+      mistral: 'MISTRAL_API_KEY',
+      azure: 'AZURE_OPENAI_API_KEY',
+    };
+
+    const tmConfigPath = path.join(process.cwd(), '.taskmaster', 'config.json');
+    let tmConfig;
+    try {
+      tmConfig = JSON.parse(fs.readFileSync(tmConfigPath, 'utf8'));
+    } catch (_e) {
+      return ok({ checked: false, note: '.taskmaster/config.json not found or unparseable — nothing to check yet.' });
+    }
+
+    // Approximate what the CLI subprocess will see: process env + a hand-parsed .env
+    // (best-effort — not a full dotenv parser, just KEY=VALUE lines).
+    const envKeys = new Set(Object.keys(process.env));
+    const envPath = path.join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      try {
+        for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+          const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.+?)\s*$/);
+          if (m && m[2].trim()) envKeys.add(m[1]);
+        }
+      } catch (_e) { /* best-effort */ }
+    }
+
+    const models = (tmConfig && tmConfig.models) || {};
+    const problems = [];
+    for (const role of ['main', 'research', 'fallback']) {
+      const r = models[role];
+      if (!r || !r.provider) continue;
+      const requiredKey = KEY_ENV[r.provider];
+      if (requiredKey && !envKeys.has(requiredKey)) {
+        problems.push(`${role}: provider "${r.provider}" (model "${r.modelId || '?'}") needs ${requiredKey} — not found in env or .env. This role will fail at the first AI op that reaches it.`);
+      }
+    }
+    return ok({ checked: true, clean: problems.length === 0, problems });
   },
 };
 

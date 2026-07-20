@@ -638,6 +638,146 @@ test('verify-code --expect fail: no testCommand → gate "skipped"', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Per-task test scoping (--task / --files) — run the full suite once at phase
+// close-out instead of on every task; the per-task gate targets just the
+// files this task touched.
+// ---------------------------------------------------------------------------
+
+/** testCommand that records the args it was actually invoked with, into CMDLINE.txt (one per line). */
+const CAPTURE_ARGS_CMD = `bash -c 'printf "%s\\n" "$@" > CMDLINE.txt' _`;
+
+function readCmdline(dir) {
+  const raw = fs.readFileSync(path.join(dir, 'CMDLINE.txt'), 'utf8');
+  return raw.split('\n').filter(Boolean);
+}
+
+test('verify-code: --task scopes java-spring tests to the FQCN(s) trace-link recorded for that task', () => {
+  const dir = tmpProject();
+  assert.equal(run(['init-project', '--stack', 'java-spring'], dir).ok, true);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = CAPTURE_ARGS_CMD;
+  cfg.verify.coverageThreshold = null; cfg.verify.forbiddenPatterns = []; cfg.verify.secretScan = false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  run(['trace-link', '--task', '7', '--feature', 'demo', '--fr', 'FR-001',
+    '--files', 'src/main/java/a/Foo.java,src/test/java/a/FooTest.java'], dir);
+
+  const r = run(['verify-code', '--feature', 'demo', '--task', '7'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.testsScoped, true, 'scoping applied');
+  const testCheck = r.data.checks.find((c) => c.name === 'tests');
+  assert.equal(testCheck.status, 'ok');
+  assert.match(testCheck.detail, /scoped to 1 test/);
+  assert.match(testCheck.detail, /a\.FooTest/);
+  assert.deepEqual(readCmdline(dir), ['--tests', 'a.FooTest'], 'gradle invoked with --tests "<fqcn>", not the full suite');
+});
+
+test('verify-code: --task scopes java-maven tests via -Dtest=', () => {
+  const dir = tmpProject();
+  assert.equal(run(['init-project', '--stack', 'java-maven'], dir).ok, true);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = CAPTURE_ARGS_CMD;
+  cfg.verify.coverageThreshold = null; cfg.verify.forbiddenPatterns = []; cfg.verify.secretScan = false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  run(['trace-link', '--task', '3', '--feature', 'demo', '--fr', 'FR-002',
+    '--files', 'src/test/java/x/y/BarTest.java'], dir);
+
+  const r = run(['verify-code', '--feature', 'demo', '--task', '3'], dir);
+  assert.equal(r.data.testsScoped, true);
+  assert.deepEqual(readCmdline(dir), ['-Dtest=x.y.BarTest']);
+});
+
+test('verify-code: --files scopes directly (RED-phase use — before trace-link has run for this task)', () => {
+  const dir = tmpProject();
+  assert.equal(run(['init-project', '--stack', 'java-spring'], dir).ok, true);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = CAPTURE_ARGS_CMD;
+  cfg.verify.coverageThreshold = null; cfg.verify.forbiddenPatterns = []; cfg.verify.secretScan = false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  const r = run(['verify-code', '--files', 'src/test/java/a/b/NewFeatureTest.java', '--expect', 'fail'], dir);
+  assert.equal(r.ok, true);
+  const testCheck = r.data.checks.find((c) => c.name === 'tests');
+  assert.match(testCheck.detail, /scoped to 1 test.*a\.b\.NewFeatureTest/);
+  assert.deepEqual(readCmdline(dir), ['--tests', 'a.b.NewFeatureTest']);
+});
+
+test('verify-code: scoping requested but not derivable (non-java stack, no taskTestCommand) → falls back to full suite, notes why', () => {
+  const dir = tmpProject();
+  assert.equal(run(['init-project', '--stack', 'node'], dir).ok, true);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = CAPTURE_ARGS_CMD;
+  cfg.verify.coverageThreshold = null; cfg.verify.forbiddenPatterns = []; cfg.verify.secretScan = false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  run(['trace-link', '--task', '1', '--feature', 'demo', '--fr', 'FR-001', '--files', 'test/foo.test.js'], dir);
+  const r = run(['verify-code', '--feature', 'demo', '--task', '1'], dir);
+  assert.equal(r.data.testsScoped, false);
+  assert.match(r.data.scopeNoteTests, /could not derive a filter/);
+  assert.deepEqual(readCmdline(dir), [], 'no extra args — the plain, unscoped testCommand ran');
+});
+
+test('verify-code: --task honors an explicit verify.taskTestCommand template for any stack', () => {
+  const dir = tmpProject();
+  assert.equal(run(['init-project', '--stack', 'node'], dir).ok, true);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = CAPTURE_ARGS_CMD;
+  cfg.verify.taskTestCommand = `${CAPTURE_ARGS_CMD} -- {files}`;
+  cfg.verify.coverageThreshold = null; cfg.verify.forbiddenPatterns = []; cfg.verify.secretScan = false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  run(['trace-link', '--task', '1', '--feature', 'demo', '--fr', 'FR-001', '--files', 'test/foo.test.js'], dir);
+  const r = run(['verify-code', '--feature', 'demo', '--task', '1'], dir);
+  assert.equal(r.data.testsScoped, true);
+  assert.deepEqual(readCmdline(dir), ['--', 'test/foo.test.js']);
+});
+
+test('verify-code: no --task/--files → unscoped, identical to pre-existing behavior', () => {
+  const dir = tmpProject();
+  assert.equal(run(['init-project', '--stack', 'java-spring'], dir).ok, true);
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = CAPTURE_ARGS_CMD;
+  cfg.verify.coverageThreshold = null; cfg.verify.forbiddenPatterns = []; cfg.verify.secretScan = false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  run(['trace-link', '--task', '7', '--feature', 'demo', '--fr', 'FR-001', '--files', 'src/test/java/a/FooTest.java'], dir);
+
+  const r = run(['verify-code', '--feature', 'demo'], dir); // no --task
+  assert.equal(r.data.testsScoped, false);
+  assert.equal(r.data.scopeNoteTests, undefined, 'no scoping was even requested, so no fallback note either');
+  assert.deepEqual(readCmdline(dir), []);
+});
+
+test('multi-repo verify-code: --task scopes to the touched repo only, using root-relative FQCN', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-scope-mr-'));
+  const hub = path.join(root, 'hub');
+  fs.mkdirSync(path.join(root, 'svc-a', 'src'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'svc-b', 'src'), { recursive: true });
+  fs.mkdirSync(hub, { recursive: true });
+  run(['init-project', '--stack', 'java-spring', '--repos', 'svc-a=../svc-a,svc-b=../svc-b'], hub);
+  const cfgPath = path.join(hub, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.verify.testCommand = CAPTURE_ARGS_CMD;
+  cfg.verify.coverageThreshold = null; cfg.verify.forbiddenPatterns = []; cfg.verify.secretScan = false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  run(['trace-link', '--task', '9', '--feature', 'demo', '--fr', 'FR-001', '--repo', 'svc-b',
+    '--files', 'src/test/java/z/ZTest.java'], hub);
+
+  const r = run(['verify-code', '--feature', 'demo', '--task', '9'], hub);
+  assert.equal(r.data.gate, 'pass');
+  assert.deepEqual(r.data.repos, ['svc-b'], 'only the touched repo scanned (existing multi-repo scoping)');
+  assert.equal(r.data.testsScoped, true);
+  assert.deepEqual(readCmdline(path.join(root, 'svc-b')), ['--tests', 'z.ZTest'], 'FQCN derived relative to svc-b, not hub');
+});
+
+// ---------------------------------------------------------------------------
 // Audit-hardening regressions (v0.3.0)
 // ---------------------------------------------------------------------------
 
@@ -1618,4 +1758,101 @@ test('taskmaster-model-plan: missing --role returns INVALID_ROLE error', () => {
   const r = run(['taskmaster-model-plan'], dir);
   assert.equal(r.ok, false, 'missing role returns ok:false');
   assert.match(r.error, /INVALID_ROLE/, 'error code is INVALID_ROLE');
+});
+
+// ---------------------------------------------------------------------------
+// taskmaster-model-check — preflight: does every role have what it needs to run?
+// ---------------------------------------------------------------------------
+
+/** Write .taskmaster/config.json with the given models block. */
+function makeTmProject(models) {
+  const dir = tmpProject();
+  fs.mkdirSync(path.join(dir, '.taskmaster'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, '.taskmaster', 'config.json'),
+    JSON.stringify({ models }, null, 2)
+  );
+  return dir;
+}
+
+/** Run taskmaster-model-check with a fully-controlled env (real host env never leaks in). */
+function runModelCheck(dir, env) {
+  let out;
+  try {
+    out = execFileSync(
+      process.execPath,
+      [ENGINE, 'taskmaster-model-check'],
+      { cwd: dir, encoding: 'utf8', env }
+    );
+  } catch (e) {
+    if (e.stdout) out = String(e.stdout);
+    else throw e;
+  }
+  return JSON.parse(out.trim().split('\n').pop());
+}
+
+test('taskmaster-model-check: checked:false when .taskmaster/config.json is absent', () => {
+  const dir = tmpProject();
+  const r = runModelCheck(dir, { PATH: process.env.PATH });
+  assert.equal(r.ok, true);
+  assert.equal(r.data.checked, false);
+});
+
+test('taskmaster-model-check: clean:true when every role is on the keyless claude-code provider', () => {
+  const dir = makeTmProject({
+    main: { provider: 'claude-code', modelId: 'sonnet' },
+    research: { provider: 'claude-code', modelId: 'sonnet' },
+    fallback: { provider: 'claude-code', modelId: 'sonnet' },
+  });
+  const r = runModelCheck(dir, { PATH: process.env.PATH });
+  assert.equal(r.ok, true);
+  assert.equal(r.data.checked, true);
+  assert.equal(r.data.clean, true);
+  assert.deepEqual(r.data.problems, []);
+});
+
+test('taskmaster-model-check: flags a keyed provider with no key in env or .env (the plat-int-test failure mode)', () => {
+  const dir = makeTmProject({
+    main: { provider: 'claude-code', modelId: 'sonnet' },
+    research: { provider: 'claude-code', modelId: 'sonnet' },
+    fallback: { provider: 'anthropic', modelId: 'claude-3-7-sonnet-20250219' },
+  });
+  // Deliberately no ANTHROPIC_API_KEY in the child env and no .env file written.
+  const r = runModelCheck(dir, { PATH: process.env.PATH });
+  assert.equal(r.ok, true);
+  assert.equal(r.data.checked, true);
+  assert.equal(r.data.clean, false);
+  assert.equal(r.data.problems.length, 1);
+  assert.match(r.data.problems[0], /fallback/);
+  assert.match(r.data.problems[0], /ANTHROPIC_API_KEY/);
+});
+
+test('taskmaster-model-check: clean:true when the required key is present via process env', () => {
+  const dir = makeTmProject({
+    main: { provider: 'anthropic', modelId: 'claude-3-7-sonnet-20250219' },
+  });
+  const r = runModelCheck(dir, { PATH: process.env.PATH, ANTHROPIC_API_KEY: 'sk-test-fake' });
+  assert.equal(r.data.clean, true, 'key present in env satisfies the check');
+});
+
+test('taskmaster-model-check: clean:true when the required key is present via .env (not process env)', () => {
+  const dir = makeTmProject({
+    research: { provider: 'perplexity', modelId: 'sonar-pro' },
+  });
+  fs.writeFileSync(path.join(dir, '.env'), 'PERPLEXITY_API_KEY=pplx-test-fake\n');
+  const r = runModelCheck(dir, { PATH: process.env.PATH }); // no PERPLEXITY_API_KEY in process env
+  assert.equal(r.data.clean, true, '.env is read even when process env lacks the key');
+});
+
+test('taskmaster-model-check: reports multiple broken roles independently', () => {
+  const dir = makeTmProject({
+    main: { provider: 'openai', modelId: 'gpt-4o' },
+    research: { provider: 'perplexity', modelId: 'sonar-pro' },
+    fallback: { provider: 'claude-code', modelId: 'sonnet' },
+  });
+  const r = runModelCheck(dir, { PATH: process.env.PATH });
+  assert.equal(r.data.clean, false);
+  assert.equal(r.data.problems.length, 2, 'main and research both flagged; fallback (claude-code) is not');
+  assert.ok(r.data.problems.some((p) => /^main:/.test(p) && /OPENAI_API_KEY/.test(p)));
+  assert.ok(r.data.problems.some((p) => /^research:/.test(p) && /PERPLEXITY_API_KEY/.test(p)));
 });

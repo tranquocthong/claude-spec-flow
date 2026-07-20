@@ -2,7 +2,25 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
-## [0.5.13] — 2026-07-11
+## [0.5.15] — 2026-07-20
+
+The single biggest cost on a multi-task SD: `verify-code`'s `tests` check ran the **full** `testCommand` on every task close (up to a 10-minute timeout, N times for N tasks) — for a Java/Gradle project this can dominate total phase wall-clock. Explicit tradeoff accepted for this fix: per-task speed over per-task full-regression coverage — a regression introduced by task 3 may now only surface at phase close-out instead of immediately; you fix it there instead of paying the full-suite tax on every task.
+
+- **`verify-code`**: new opt-in `--task <id>` and `--files "a,b"` flags. `--task` looks up the files `trace-link` recorded for that task (`file-links.json`) and derives a scoped test filter; `--files` takes an explicit list directly (for the RED-phase call, which runs *before* `trace-link` has anything to look up). `java-spring`/`java-maven` convert `src/test/(java|kotlin)/...` paths to FQCNs and append `--tests "<fqcn>"` (Gradle) / `-Dtest=<fqcn,...>` (Maven) to the configured `testCommand`. Other stacks need an explicit `config.verify.taskTestCommand` template (a `{files}` placeholder) or fall back to the full suite — never breaks, never silently mis-scopes; the result's `testsScoped`/`scopeNoteTests` fields say which happened. No `--task`/`--files` at all → byte-identical to the old behavior. Multi-repo: file-root matching strips the `<repo>/` prefix before deriving the FQCN, so scoping is correct per-repo. 7 new tests.
+- **`commands/phase.md` step 4 (Automated quality gate)**: now always passes `--task <id>`.
+- **`agents/hybrid-executor.md` step 3 (RED confirm)**: now passes `--files "<the test file(s) just written>"` instead of running the full suite to confirm one new test is red.
+- **`commands/phase.md` Phase close-out**: new step 1a runs `verify-code` **once**, unscoped (no `--task`), before the existing checklist regression sweep (renumbered 1b) — this is where cross-task regressions the per-task scoped checks couldn't see get caught, now that the full suite no longer runs on every task.
+- Tests: 117 (110 + 7 new).
+
+## [0.5.14] — 2026-07-20
+
+Found live in a project running `/sf:phase` on a 15-task SD: `.taskmaster/config.json` had drifted to `main`/`research` = `claude-code`/`opus` (process exited code 1 on every call — plan/account likely doesn't have Opus enabled for that session) with `fallback` = `anthropic` and no `ANTHROPIC_API_KEY` anywhere. All three roles in the retry chain failed, `update-task --append` errored outright, and the failure only surfaced after burning a task's worth of time on retries — the per-task loop had no way to see this coming.
+
+- **New engine command `taskmaster-model-check`** (`bin/flow-tools.cjs`): pure, zero-subprocess preflight. Reads `.taskmaster/config.json`, and for each role (`main`/`research`/`fallback`) on a keyed provider (`anthropic`, `perplexity`, `openai`, `google`, `groq`, `xai`, `openrouter`, `mistral`, `azure`) checks that its required `*_API_KEY` is present in `process.env` or a project `.env` file. `claude-code`/`ollama` are keyless and never flagged. Returns `{checked, clean, problems[]}` — `checked:false` (no `.taskmaster/config.json` yet) means nothing to check. 6 new tests.
+- **`commands/phase.md`**: wired `taskmaster-model-check` in right after `use-tag`, before any per-task AI-op — a broken role is now surfaced once, up front, instead of discovered mid-phase.
+- **`commands/phase.md` Per-task loop, step 3**: `update-task --append` failures are now explicitly **non-blocking** — on error, surface it once and proceed straight to `trace-link`/`set_task_status` (the actual disk facts) instead of retrying in a loop or halting the phase over what is documented as optional history.
+- **`commands/phase.md` Per-task loop, step 1**: `wave-plan`'s ready (dependency-satisfied) set is now checked before `next_task`; if ≥2 ready tasks look file-disjoint (judged from `title`/`details` — `wave-plan` itself has no file data to prove disjointness, since files aren't known until a task is implemented), the orchestrator spawns one `hybrid-executor` per task in the same turn instead of working strictly one-at-a-time. Removed the old passive "Tip" line this replaces.
+- No change to `taskmaster-model-plan`'s own behavior or tests. Tests: 110 (104 + 6 new).
 
 Follow-up to `0.5.12`: one `node -e` JSON re-parse site was missed.
 

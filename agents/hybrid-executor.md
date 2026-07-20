@@ -24,9 +24,9 @@ You implement exactly ONE task. The SD section is the contract.
 
    **Do NOT write any production code until the test is confirmed failing.**
 
-   If `config.verify.testCommand` is configured — confirm RED before proceeding:
+   If `config.verify.testCommand` is configured — confirm RED before proceeding. **Pass `--files "<the test file path(s) you just wrote>"`** so this only runs your one new test, not the full suite (java-spring/java-maven derive a `--tests`/`-Dtest=` filter automatically from the path; other stacks fall back to the full suite unless `config.verify.taskTestCommand` is set — either way it never errors, just tells you in `scopeNoteTests` whether scoping applied):
    ```
-   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code --feature <feature> --expect fail
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code --feature <feature> --files "<test file path(s)>" --expect fail
    ```
    Interpret the result:
    - `gate: "red-confirmed"` → test fails as expected. Proceed to step 4.

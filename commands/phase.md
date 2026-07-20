@@ -65,6 +65,12 @@ npx -y -p task-master-ai@0.43.1 task-master use-tag <feature>
 
 Use a **per-feature `--tag`** so this feature's tasks stay isolated. Only if the CLI genuinely errors on a missing provider/key do you ask the user to run these in their terminal.
 
+> **Preflight — Task Master model/provider sanity check.** Run once, right after `use-tag`, before any per-task AI-op:
+> ```
+> node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-check
+> ```
+> This is a zero-cost static check: for each role (`main`/`research`/`fallback`) it confirms a keyed provider (`anthropic`, `perplexity`, ...) actually has its required key in env/`.env`. `claude-code`/`ollama` never need a key. If `problems` is non-empty, **do not silently proceed** — surface each problem to the user once, and fix the role before starting the loop (either `task-master models --set-<role> sonnet --claude-code`, the keyless default `/sf:init` seeds, or add the missing key). Skipping this lets a broken role (e.g. `fallback` pointed at `anthropic` with no `ANTHROPIC_API_KEY`) sit invisible until the exact moment `main` fails mid-phase and the fallback chain has nothing to fall back to — which then burns the per-task loop's time on failed retries instead of doing work. `checked: false` (no `.taskmaster/config.json` yet) → nothing to check, proceed.
+
 > **CRITICAL — set the global current tag (`use-tag`).** Task Master MCP state ops (`next_task`, `set_task_status`, `update-subtask`) bind to the **global `currentTag`** in `tasks.json` and may **ignore** a per-call `tag:` param. If `currentTag` still points at a prior feature, every state op silently operates on the wrong tag — executors fail to log ("wrong tag … requires parentId.subtaskId"), and trace counts read another feature's tasks. So **always run `use-tag <feature>` right after seeding** (and again on resume if you switched features) so `currentTag` == this feature. The engine's `trace-build`/`trace-link`/`state-update`/`status-report` are already tag-scoped via `--feature` and do not depend on `currentTag`.
 
 ## Step 0.5 — Confirm the task list (gate: `config.phase.confirmTasks`, default true)
@@ -102,12 +108,19 @@ Returns per-FR complexity scores (1–10):
 
 0. **Pick up `review` tasks FIRST (no dead-end).** Before `next_task`, check for tasks stuck in `review` (`get_tasks` `status=review`, `tag: "<feature>"`). A task lands in `review` two ways: (a) smoke **failed** (step 5 halted it), or (b) it was implemented but never closed. `next_task` does **not** return `review` tasks, so left alone they are a silent dead-end. For each `review` task: re-run its smoke suite (step 5). **Passed** → close it (step 6). **Failed** → re-attempt: set it back to `in-progress`, re-spawn the executor with the FAIL output as context, fix, re-verify. If the same task fails smoke **twice in a row**, STOP and ask the user (it likely needs a spec change → `/sf:change`, or a bug fix → `/sf:bug`) — do not loop forever. Only when no `review` task remains, proceed to step 1.
 
-1. **Next task**
+1. **Next task(s) — check for parallelizable work first**
+   ```
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs wave-plan --feature <feature>
+   ```
+   This returns `ready`: the tasks whose dependencies are all `done` (the workable set) — it does **not** prove file-disjointness (files touched aren't known until a task is actually implemented, so the tool has nothing to compare yet). If `ready` has ≥2 tasks, **you** judge disjointness from each task's `title`/`details` (get the full text via `mcp__task-master-ai__get_task`): different component/layer/file mentioned, no shared entity → likely safe to batch. Same file, same class, one obviously extends the other → keep sequential. When in doubt, sequential — a wrong parallel guess risks two executors clobbering the same file with no worktree isolation here.
+   **If you judge ≥2 ready tasks file-disjoint, spawn one `hybrid-executor` per task in the SAME message** (multiple Agent tool calls in one turn — see step 2) instead of taking them one at a time. Otherwise fall back to:
    ```
    mcp__task-master-ai__next_task   # tag: "<feature>"  (see per-feature tag rule above — applies to every TM op below)
    ```
 
-2. **Spawn hybrid-executor** with: task details + `CONTEXT.md` + relevant SD section refs (from `.spec-flow/trace.json` FR→TC links). Note that **code stays English even when `config.language` ≠ `en`** (that setting is for conversation + docs only). **Model:** read `config.json → models.hybridExecutor`; if set to a non-null value, pass it as the Agent tool's `model` param (overrides the agent's packaged `sonnet` default). If absent/`null`, omit the param — the agent falls back to its own frontmatter.
+2. **Spawn hybrid-executor** (one per task selected in step 1 — in parallel when step 1 found a file-disjoint batch, in a single call otherwise) with: task details + `CONTEXT.md` + relevant SD section refs (from `.spec-flow/trace.json` FR→TC links). Note that **code stays English even when `config.language` ≠ `en`** (that setting is for conversation + docs only). **Model:** read `config.json → models.hybridExecutor`; if set to a non-null value, pass it as the Agent tool's `model` param (overrides the agent's packaged `sonnet` default). If absent/`null`, omit the param — the agent falls back to its own frontmatter.
+
+   **When a batch ran in parallel:** steps 3-6 below still run once per task, in any order — this is safe only because you already judged the batch file-disjoint in step 1 (no two tasks touch the same file, so their `trace-link`/`verify-code`/`set_task_status` calls cannot clobber each other). Do not parallelize `trace-build` itself (it rebuilds the whole trace file) — run it once after all tasks in the batch have logged their `trace-link`.
 
    After it returns, **check TDD evidence in its summary before proceeding**:
    - For a feature task: the summary must mention a test file written and either `gate: "red-confirmed"` (testCommand ran and confirmed RED) or an explicit note that testCommand is not configured. If neither appears, ask the executor to show the RED confirmation before treating the task as implemented.
@@ -128,6 +141,7 @@ Returns per-FR complexity scores (1–10):
    ```
    Use **`update-task --append`** (logs onto the task itself), NOT `update-subtask --id=<id>`: `update-subtask` requires a `parent.sub` id and fails for any task that was not expanded into subtasks (the common solo/fast-path case — "requires parentId.subtaskId"). `--append` works for both expanded and un-expanded tasks.
    **Cost note:** `update-task --append` is an AI op (one CLI call per task — slow over many tasks). It is **optional human-readable history**, not the source of truth: the deterministic record is `trace-link` (files touched — a zero-AI state op) + `state-update` + the TM status. If per-task AI latency is a problem, **batch one note at task close** or skip it; do NOT skip `trace-link`/`set_task_status` (those are the disk facts `/sf:status` reads).
+   **Non-blocking on failure.** This is an AI-op subprocess (provider outage, a misconfigured role the preflight missed, a transient CLI crash) — it can fail for reasons that have nothing to do with the task's actual code. If it errors or exits non-zero: do **not** retry it in a loop and do **not** halt the per-task loop over it. Surface the failure once, then proceed straight to `trace-link` + `set_task_status` below — those are the disk facts that matter; the append is nice-to-have history. Fix the underlying provider config (re-run `taskmaster-model-check`) at your convenience, not mid-loop.
    If executor did not call `trace-link`, run it from the executor's reported file list:
    ```
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs trace-link \
@@ -143,12 +157,13 @@ Returns per-FR complexity scores (1–10):
 
 4. **Automated quality gate**
    ```
-   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code --feature <feature>
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code --feature <feature> --task <id>
    ```
-   **Multi-repo: ALWAYS pass `--feature`** (or `--repos "a,b"`). It scopes the scan to the repos this feature actually wrote to (read from `file-links.json`), so an unrelated repo sitting on a red WIP branch can't poison this feature's gate. Single-repo → `--feature` is harmless (one root). The result includes `scope` (what it narrowed to) and `repos` (what ran).
+   **Always pass `--task <id>`.** It scopes the `tests` check to just this task's own test file(s) (via `trace-link` recorded in step 3) instead of the full suite — java-spring/java-maven derive a `--tests`/`-Dtest=` filter automatically; other stacks need `config.verify.taskTestCommand` (a template with a `{files}` placeholder) or fall back to the full suite (never breaks — check `testsScoped`/`scopeNoteTests` in the result to see which happened). This is the main lever for phase speed on a multi-task SD: the full suite no longer runs N times, it runs once (see Phase close-out step 1a). Forbidden-patterns/secret-scan/coverage are unaffected — those already scan the whole scoped repo root regardless of `--task`.
+   **Multi-repo: ALWAYS also pass `--feature`** (or `--repos "a,b"`). It scopes the scan to the repos this feature actually wrote to (read from `file-links.json`), so an unrelated repo sitting on a red WIP branch can't poison this feature's gate. Single-repo → `--feature` is harmless (one root). The result includes `scope` (what it narrowed to) and `repos` (what ran).
    Parse returned JSON:
-   - `gate: "fail"` → `set_task_status` → `review`; surface `detail` and `fix`; **halt**.
-   - `gate: "pass"` → at least one real check ran and none failed → proceed to step 5.
+   - `gate: "fail"` → `set_task_status` → `review`; surface `detail` and `fix`; **halt**. A failure here caught by the SCOPED test still means this task's own test is red — treat it exactly as before.
+   - `gate: "pass"` → at least one real check ran and none failed → proceed to step 5. Remember: with scoping active, "pass" confirms THIS task's test(s) and static checks, not that nothing else in the codebase broke — that's what the full-suite run at phase close-out is for.
    - `gate: "skipped"` → **nothing was actually verified** (no `verify` block configured). Do NOT report the code as verified. Surface the `note` **once per phase, on the first task only** — repeating "verify not configured" on every task is noise; say it once ("verify not configured — the automated gate checks nothing this run; re-run `/sf:init --stack <stack>` to seed a real preset"), then stay silent on it for the remaining tasks. It does not block — but it is honestly a no-op, not a pass.
    Generic and config-driven — Java teams configure gradle + forbidden patterns; a project with no verify block is `skipped` (surfaced as a no-op), never a silent pass.
 
@@ -182,15 +197,17 @@ Returns per-FR complexity scores (1–10):
 
 7. **Repeat** until no pending tasks remain.
 
-> Tip: `flow-tools wave-plan` lists the tasks whose dependencies are all done (the workable set). The
-> model may choose to work file-disjoint ready tasks concurrently — but anything that shares files
-> must be done sequentially to avoid clobbering (no worktree isolation here).
-
 ## Phase close-out
 
 0. **Reconcile lingering `review` tasks.** Tasks land in `review` (step 5) and only flip to `done` in step 6. If work was completed outside this loop (a prior session, a manual/live verify), tasks can sit stuck in `review` — and `next_task` will NOT return them, so re-running `/sf:phase` does nothing for them. After the regression sweep below passes, **confirm with the user** then `set_task_status --status=done` for every `review` task whose behavior the regression covers (decision stays the user's — parallels bug/change close-out; never auto-close silently). `status-report` flags this state ("N task(s) in review — reconcile").
 
-1. **Regression sweep** — pass `--json` so the runner emits a machine-readable result line for `verify-collect`, and capture it:
+1a. **Full unit-test suite — once.** Per-task step 4 scoped `verify-code` to each task's own test(s) (speed), which means the full suite hasn't run since task 1. Run it now, unscoped, to catch any cross-task regression before the checklist sweep:
+   ```
+   node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs verify-code --feature <feature>
+   ```
+   (no `--task` → full `testCommand`, exactly like the pre-scoping gate). `gate: "fail"` here is a **cross-task regression** — something task N broke that its own scoped test didn't cover. Fix it, re-run this step, then continue; don't skip ahead to the checklist sweep on a failing full suite.
+
+1b. **Regression sweep (checklist)** — pass `--json` so the runner emits a machine-readable result line for `verify-collect`, and capture it:
    ```
    scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag regression --json | tee .spec-flow/specs/<feature>/regression-results.txt
    ```
@@ -215,7 +232,8 @@ Returns per-FR complexity scores (1–10):
 
 ## Pipeline recap
 ```
-parse-prd → use-tag → route --sd → next_task → hybrid-executor → update-task --append → set_status(review)
-  → verify-code (skipped=no-op if unconfigured) → PRIME → run-checklist smoke (deferrable if no surface) → state-update (per task)
-  → run-checklist regression → verify-collect → VERIFICATION.md → state-update (phase)
+parse-prd → use-tag → taskmaster-model-check → route --sd → wave-plan → [next_task | parallel batch]
+  → hybrid-executor (RED via verify-code --files, scoped) → update-task --append (non-blocking) → set_status(review)
+  → verify-code --task <id> (scoped; skipped=no-op if unconfigured) → PRIME → run-checklist smoke (deferrable if no surface) → state-update (per task)
+  → verify-code (full suite, once) → run-checklist regression → verify-collect → VERIFICATION.md → state-update (phase)
 ```
