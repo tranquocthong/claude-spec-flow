@@ -1157,7 +1157,7 @@ test('#4 status-report: surfaces declared live gaps from VERIFICATION.md', () =>
   const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
   fs.mkdirSync(sdDir, { recursive: true });
   fs.writeFileSync(path.join(sdDir, 'SD.md'), '# SD: demo\n');
-  fs.writeFileSync(path.join(dir, '.spec-flow', 'VERIFICATION.md'), [
+  fs.writeFileSync(path.join(sdDir, 'VERIFICATION.md'), [
     '# VERIFICATION — demo',
     'status: verified-adhoc',
     '',
@@ -1169,10 +1169,22 @@ test('#4 status-report: surfaces declared live gaps from VERIFICATION.md', () =>
     '- something else',
     '',
   ].join('\n'));
+  // Regression guard: a stale global .spec-flow/VERIFICATION.md (leftover from a
+  // prior feature's close-out) must NOT leak into this feature's status. Reads are
+  // per-feature only.
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'VERIFICATION.md'), [
+    '# VERIFICATION — other-feature',
+    'status: passed',
+    '',
+    '## Live gaps',
+    '- stale global gap that must not appear',
+    '',
+  ].join('\n'));
   const r = run(['status-report', '--feature', 'demo'], dir);
   assert.equal(r.ok, true);
   assert.equal(r.data.verifiedGaps.length, 2, 'two live gaps extracted (Notes section excluded)');
   assert.match(r.data.verifiedGaps[0], /webhook delivery/);
+  assert.ok(!r.data.verifiedGaps.some(g => /stale global/.test(g)), 'stale global VERIFICATION.md must not leak');
 });
 
 test('#1 checklist-gen: internal/no-HTTP SD emits live-e2e scaffold, not a fake HTTP stub', () => {

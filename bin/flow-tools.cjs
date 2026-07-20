@@ -1067,7 +1067,7 @@ const commands = {
     // Decision ladder driven purely by artifacts on disk — no AI, no guessing.
     const sdPath = path.join(process.cwd(), PATHS.specs, featureName, 'SD.md');
     const checklistPath = path.join(process.cwd(), PATHS.specs, featureName, 'CHECKLIST.yaml');
-    const verificationPath = path.join(STATE_DIR, 'VERIFICATION.md');
+    const verificationPath = path.join(process.cwd(), PATHS.specs, featureName, 'VERIFICATION.md');
     let nextStep;
     if (featureName === 'unknown' || !fs.existsSync(sdPath)) {
       nextStep = 'No SD — run `/sf:ingest <srs>`.';
@@ -2132,10 +2132,10 @@ const commands = {
     // ship with open "not verified live" items must be VISIBLE in /sf:status, not
     // buried in VERIFICATION prose (else it's forgotten at merge). Convention: bullet
     // lines under a "Deferred / Not verified live / Live gaps" heading.
-    const verifPath = path.join(PATHS.stateDir, 'VERIFICATION.md');
+    const verifPath = featureName ? path.join(process.cwd(), PATHS.specs, featureName, 'VERIFICATION.md') : null;
     let verified = null;
     let verifiedGaps = [];
-    if (fs.existsSync(verifPath)) {
+    if (verifPath && fs.existsSync(verifPath)) {
       try {
         const vc = fs.readFileSync(verifPath, 'utf8');
         verified = /status:\s*passed/i.test(vc);
