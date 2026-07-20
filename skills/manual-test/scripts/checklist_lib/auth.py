@@ -1,9 +1,10 @@
 """Token resolution — returns (header_name, header_value) for a token def.
 
-Three forms:
+Four forms:
   auth: keycloak_ropc                 → kc-ropc.sh password grant → Bearer
   type: keycloak-client-credentials   → OAuth2 client_credentials grant
   payload: '<json>'                   → base64 → X-Userinfo (Summer/APISIX)
+  bearer: '<jwt-or-${ENV_VAR}>'       → literal pre-minted token → Bearer
 
 Token-def string fields are ${VAR}-expanded before use (e.g. ${USER_ID}).
 """
@@ -54,5 +55,10 @@ def resolve_token(tok_def, scripts_dir, varstore):
     if "payload" in td:
         enc = base64.b64encode(td["payload"].encode()).decode().rstrip("\n")
         return ("X-Userinfo", enc)
+
+    if "bearer" in td:
+        if not td["bearer"]:
+            raise RuntimeError("bearer token def resolved to an empty value (check the env var it references)")
+        return (td.get("header", "Authorization"), f"Bearer {td['bearer']}")
 
     raise ValueError(f"unsupported token def: {tok_def}")
