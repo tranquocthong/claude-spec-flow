@@ -2,6 +2,22 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.5.18] — 2026-07-21
+
+New token-def form for `/sf:manual-test` auth, for services that expect a pre-minted JWT rather than a grant flow.
+
+- **`skills/manual-test/scripts/checklist_lib/auth.py`**: fourth token form `bearer: '<jwt-or-${ENV_VAR}>'` — resolves a literal token straight to an `Authorization: Bearer <token>` header (override the header name with `header:`). String fields are still `${VAR}`-expanded, so a token can be injected from the environment. Fails loudly (`RuntimeError`) when the value resolves empty, so a missing env var can never be sent as an empty `Bearer` header. Joins the existing `keycloak_ropc` / `keycloak-client-credentials` / `payload` forms.
+
+## [0.5.17] — 2026-07-21
+
+- **`skills/manual-test/scripts/checklist_lib/setup.py`**: `_do_http` read the `capture:` map off `h` (the headers dict) instead of `sb` (the setup step block), so any `capture:` declared on a setup HTTP step silently resolved nothing — captured vars were never set. Read the map off `sb`. No behavior change for steps without `capture:`.
+
+## [0.5.16] — 2026-07-21
+
+Per-feature verification state was being read from a single global file, so one feature's close-out leaked into another's status.
+
+- **`bin/flow-tools.cjs` / `lib/maintenance.cjs`**: `status-report`, `state-update`, and doctor's `verify-integrity` check all read a single global `.spec-flow/VERIFICATION.md`. With per-feature specs, that surfaced a prior feature's `verified` flag and live gaps as the active feature's status (e.g. `wiki-core` showed `platform-foundation`'s leftover gaps). All three now read `.spec-flow/specs/<feature>/VERIFICATION.md`, matching the per-feature path `task-baseline` already used; `status-report` guards a null feature. Regression test asserts a stale global file does not leak. Tests: 117.
+
 ## [0.5.15] — 2026-07-20
 
 The single biggest cost on a multi-task SD: `verify-code`'s `tests` check ran the **full** `testCommand` on every task close (up to a 10-minute timeout, N times for N tasks) — for a Java/Gradle project this can dominate total phase wall-clock. Explicit tradeoff accepted for this fix: per-task speed over per-task full-regression coverage — a regression introduced by task 3 may now only surface at phase close-out instead of immediately; you fix it there instead of paying the full-suite tax on every task.
