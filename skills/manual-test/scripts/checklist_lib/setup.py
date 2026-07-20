@@ -95,7 +95,7 @@ def _do_http(sb, ctx, dry_run):
     status, jbody, _ = http.do_request(method, url, headers, body)
     if status >= 400:
         raise RuntimeError(f"setup http {method} {path} → {status}")
-    for var, expr in (h.get("capture") or {}).items():
+    for var, expr in (sb.get("capture") or {}).items():
         vals = jsonpath.resolve(vs.expand(expr), jbody) if jbody is not None else []
         vs.set(var, vals[0] if vals else "")
 
