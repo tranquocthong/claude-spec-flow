@@ -23,6 +23,7 @@ const {
 } = require('../lib/core.cjs');
 const maintenance = require('../lib/maintenance.cjs');
 const drift = require('../lib/drift.cjs');
+const taskCore = require('../lib/task-core.cjs');
 
 // =====================================================================
 //  COMMANDS (workflow). Static commands live in lib/maintenance.cjs;
@@ -2334,6 +2335,137 @@ const commands = {
 
     // FR-003: override needed
     return ok({ needsChange: true, configured, previous });
+  },
+
+  // ---------------------------------------------------------------------------
+  // task-core wrappers (Task #9 — additive only; no existing command modified)
+  //
+  // Each wrapper: parse args with the existing parseArgs result, map to taskCore
+  // function params, call inside try/catch, convert thrown Error with .code into
+  // the err(message) result shape, and return ok(data) on success.
+  //
+  // HARD CONSTRAINTS: additive only — no existing command, the dispatcher, or any
+  // existing behavior is changed. Existing callers behave identically.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * task-add  --title <title> [--tag <tag>] [--priority high|medium|low]
+   *           [--description <desc>] [--details <details>]
+   *
+   * Creates a new task. When --tag is omitted the tag is resolved from
+   * .taskmaster/state.json (currentTag field) in the process cwd — this is
+   * the same resolution that task-core.addTask() performs internally (FR-004).
+   */
+  'task-add'(args) {
+    const tag = args.tag || null;
+    const fields = {
+      title: args.title,
+      description: args.description,
+      details: args.details,
+      priority: args.priority,
+    };
+    try {
+      const task = taskCore.addTask(tag, fields);
+      return ok(task);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-get  --tag <tag> --id <id>
+   *
+   * Returns the task with the given id from the tag. Returns ok with data:null
+   * when the id is not found — never returns err for a missing task (FR-005).
+   */
+  'task-get'(args) {
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    if (!args.id) return err('MISSING_ARG: --id <id>');
+    try {
+      const task = taskCore.getTask(args.tag, args.id);
+      return ok(task);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-list  --tag <tag> [--status <status|csv>] [--with-subtasks]
+   *
+   * Lists all tasks in the tag. Supports optional --status filter (single value
+   * or comma-separated list) and --with-subtasks flag. Returns { tasks, stats }
+   * where stats always covers the entire unfiltered tag (FR-006, FR-007).
+   */
+  'task-list'(args) {
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    const opts = {};
+    if (args.status) opts.status = args.status;
+    if (args['with-subtasks']) opts.withSubtasks = true;
+    try {
+      const result = taskCore.listTasks(args.tag, opts);
+      return ok(result);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-set-status  --tag <tag> --id <id> --status <status>
+   *
+   * Changes the status of a task (or subtask when id is "<parent>.<sub>").
+   * Returns the updated top-level task on success. On error, maps thrown
+   * Error codes to the err() result shape: ERR_INVALID_STATUS (FR-009),
+   * ERR_TASK_NOT_FOUND (FR-010).
+   */
+  'task-set-status'(args) {
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    if (!args.id) return err('MISSING_ARG: --id <id>');
+    if (!args.status) return err('MISSING_ARG: --status <status>');
+    try {
+      const task = taskCore.setStatus(args.tag, args.id, args.status);
+      return ok(task);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-next  --tag <tag>
+   *
+   * Returns the next actionable pending task whose dependencies are all done.
+   * Never throws — returns ok({ task: null, reason }) when no eligible task
+   * exists (FR-011, FR-012). Priority: high > medium > low, then id ascending.
+   */
+  'task-next'(args) {
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    try {
+      const result = taskCore.nextTask(args.tag);
+      return ok(result);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-update  --tag <tag> --id <id>
+   *              [--description <desc>] [--details <details>] [--notes <notes>]
+   *
+   * Updates the description, details, and/or notes of an existing task (FR-013).
+   * Throws ERR_TASK_NOT_FOUND when the id is not found.
+   */
+  'task-update'(args) {
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    if (!args.id) return err('MISSING_ARG: --id <id>');
+    const fields = {};
+    if (args.description !== undefined) fields.description = args.description;
+    if (args.details !== undefined) fields.details = args.details;
+    if (args.notes !== undefined) fields.notes = args.notes;
+    try {
+      const task = taskCore.updateTask(args.tag, args.id, fields);
+      return ok(task);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
   },
 
   // Preflight: does every Task Master role (main/research/fallback) have what it

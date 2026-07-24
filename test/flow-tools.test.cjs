@@ -1868,3 +1868,289 @@ test('taskmaster-model-check: reports multiple broken roles independently', () =
   assert.ok(r.data.problems.some((p) => /^main:/.test(p) && /OPENAI_API_KEY/.test(p)));
   assert.ok(r.data.problems.some((p) => /^research:/.test(p) && /PERPLEXITY_API_KEY/.test(p)));
 });
+
+// ---------------------------------------------------------------------------
+// task-* command wrappers (Task #9 — wires task-core into flow-tools.cjs)
+// Tests cover: ok/err shape, error-code mapping, end-to-end persistence, atomicity.
+// ---------------------------------------------------------------------------
+
+/** Seed a .taskmaster/state.json so task-add can resolve the tag from cwd. */
+function seedState(dir, tag) {
+  const tmDir = path.join(dir, '.taskmaster');
+  fs.mkdirSync(tmDir, { recursive: true });
+  fs.writeFileSync(path.join(tmDir, 'state.json'), JSON.stringify({ currentTag: tag }));
+}
+
+// -- task-add ----------------------------------------------------------------
+
+test('task-add: creates a task and returns ok with the new task object', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  const r = run(['task-add', '--tag', 'default', '--title', 'My first task'], dir);
+  assert.equal(r.ok, true, 'task-add ok');
+  assert.equal(r.data.id, '1', 'first task gets id 1');
+  assert.equal(r.data.title, 'My first task');
+  assert.equal(r.data.status, 'pending');
+  assert.equal(r.data.priority, 'medium');
+  assert.ok(r.data.updatedAt, 'updatedAt present');
+});
+
+test('task-add: resolves tag from state.json when --tag is omitted', () => {
+  const dir = tmpProject();
+  seedState(dir, 'myfeature');
+  const r = run(['task-add', '--title', 'Tag-from-state task'], dir);
+  assert.equal(r.ok, true, 'task-add resolves tag from state.json');
+  assert.equal(r.data.title, 'Tag-from-state task');
+});
+
+test('task-add: missing title returns err carrying ERR_INVALID_TITLE', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  const r = run(['task-add', '--tag', 'default'], dir);
+  assert.equal(r.ok, false, 'missing title returns err');
+  assert.match(r.error, /ERR_INVALID_TITLE|MISSING_ARG/);
+});
+
+test('task-add: no tag and no state.json returns err carrying ERR_NO_TAG', () => {
+  const dir = tmpProject();
+  // no seedState — no state.json
+  const r = run(['task-add', '--title', 'No tag task'], dir);
+  assert.equal(r.ok, false, 'no tag → err');
+  assert.match(r.error, /ERR_NO_TAG/);
+});
+
+test('task-add: --priority is applied when valid', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  const r = run(['task-add', '--tag', 'default', '--title', 'High prio task', '--priority', 'high'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.priority, 'high');
+});
+
+// -- task-get ----------------------------------------------------------------
+
+test('task-get: returns the task when found', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Find me'], dir);
+  const r = run(['task-get', '--tag', 'default', '--id', '1'], dir);
+  assert.equal(r.ok, true, 'task-get ok');
+  assert.equal(r.data.id, '1');
+  assert.equal(r.data.title, 'Find me');
+});
+
+test('task-get: returns ok with data:null when id does not exist (FR-005: no throw)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  const r = run(['task-get', '--tag', 'default', '--id', '999'], dir);
+  assert.equal(r.ok, true, 'task-get returns ok even when task not found');
+  assert.equal(r.data, null, 'data is null when task not found');
+});
+
+test('task-get: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-get', '--id', '1'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+test('task-get: missing --id returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-get', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*id/i);
+});
+
+// -- task-list ---------------------------------------------------------------
+
+test('task-list: returns tasks array and stats object (FR-006, FR-007)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task A'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task B'], dir);
+  const r = run(['task-list', '--tag', 'default'], dir);
+  assert.equal(r.ok, true, 'task-list ok');
+  assert.equal(Array.isArray(r.data.tasks), true, 'tasks is array');
+  assert.equal(r.data.tasks.length, 2, 'two tasks returned');
+  assert.ok(r.data.stats, 'stats object present');
+  assert.equal(typeof r.data.stats.completionPercentage, 'number', 'completionPercentage is a number');
+  assert.equal(r.data.stats.pending, 2, 'both tasks are pending');
+});
+
+test('task-list: --status filter returns only matching tasks', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task A'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task B'], dir);
+  run(['task-set-status', '--tag', 'default', '--id', '1', '--status', 'done'], dir);
+  const r = run(['task-list', '--tag', 'default', '--status', 'pending'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.tasks.length, 1, 'only the pending task returned');
+  assert.equal(r.data.tasks[0].id, '2', 'task 2 is the pending one');
+  // stats are still computed on all tasks (FR-007: stats on whole tag, not filtered set)
+  assert.equal(r.data.stats.done, 1, 'stats.done counts all tasks (1 done in whole tag)');
+});
+
+test('task-list: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-list'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- task-set-status ---------------------------------------------------------
+
+test('task-set-status: changes status and returns the updated task', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Status target'], dir);
+  const r = run(['task-set-status', '--tag', 'default', '--id', '1', '--status', 'done'], dir);
+  assert.equal(r.ok, true, 'task-set-status ok');
+  assert.equal(r.data.status, 'done', 'status updated to done');
+});
+
+test('task-set-status: invalid status returns err with ERR_INVALID_STATUS (FR-009)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task'], dir);
+  const r = run(['task-set-status', '--tag', 'default', '--id', '1', '--status', 'bogus'], dir);
+  assert.equal(r.ok, false, 'invalid status returns err');
+  assert.match(r.error, /ERR_INVALID_STATUS/, 'error carries ERR_INVALID_STATUS code');
+});
+
+test('task-set-status: non-existent id returns err with ERR_TASK_NOT_FOUND (FR-010)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  const r = run(['task-set-status', '--tag', 'default', '--id', '999', '--status', 'done'], dir);
+  assert.equal(r.ok, false, 'non-existent id returns err');
+  assert.match(r.error, /ERR_TASK_NOT_FOUND/, 'error carries ERR_TASK_NOT_FOUND code');
+});
+
+test('task-set-status: missing --status returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task'], dir);
+  const r = run(['task-set-status', '--tag', 'default', '--id', '1'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*status/i);
+});
+
+// -- task-next ---------------------------------------------------------------
+
+test('task-next: returns the next actionable pending task (FR-011)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Next candidate'], dir);
+  const r = run(['task-next', '--tag', 'default'], dir);
+  assert.equal(r.ok, true, 'task-next ok');
+  assert.ok(r.data.task, 'task field present');
+  assert.equal(r.data.task.id, '1', 'next task is id 1');
+});
+
+test('task-next: returns task:null with reason when no pending tasks remain (FR-012)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  // no tasks added — no pending tasks
+  const r = run(['task-next', '--tag', 'default'], dir);
+  assert.equal(r.ok, true, 'task-next never throws');
+  assert.equal(r.data.task, null, 'task is null when no eligible task');
+  assert.ok(r.data.reason, 'reason string provided');
+});
+
+test('task-next: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-next'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- task-update -------------------------------------------------------------
+
+test('task-update: updates description and returns the updated task (FR-013)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Update target'], dir);
+  const r = run(['task-update', '--tag', 'default', '--id', '1', '--description', 'Updated desc'], dir);
+  assert.equal(r.ok, true, 'task-update ok');
+  assert.equal(r.data.description, 'Updated desc', 'description updated');
+});
+
+test('task-update: updates notes field', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Notes target'], dir);
+  const r = run(['task-update', '--tag', 'default', '--id', '1', '--notes', 'some notes'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.notes, 'some notes');
+});
+
+test('task-update: non-existent id returns err with ERR_TASK_NOT_FOUND (FR-013)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  const r = run(['task-update', '--tag', 'default', '--id', '999', '--description', 'x'], dir);
+  assert.equal(r.ok, false, 'non-existent id returns err');
+  assert.match(r.error, /ERR_TASK_NOT_FOUND/, 'error carries ERR_TASK_NOT_FOUND code');
+});
+
+test('task-update: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-update', '--id', '1', '--description', 'x'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- E2E sequence: cross-command persistence ---------------------------------
+
+test('E2E: task-add → task-get → task-set-status → task-list persists state across CLI calls', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+
+  // 1. Add two tasks
+  const add1 = run(['task-add', '--tag', 'default', '--title', 'E2E task 1'], dir);
+  assert.equal(add1.ok, true);
+  const add2 = run(['task-add', '--tag', 'default', '--title', 'E2E task 2'], dir);
+  assert.equal(add2.ok, true);
+  assert.equal(add2.data.id, '2', 'second task gets id 2');
+
+  // 2. Verify task-get reads what task-add wrote
+  const got = run(['task-get', '--tag', 'default', '--id', '1'], dir);
+  assert.equal(got.ok, true);
+  assert.equal(got.data.title, 'E2E task 1', 'task-get retrieves task written by task-add');
+
+  // 3. Change status in a separate CLI call
+  const setOk = run(['task-set-status', '--tag', 'default', '--id', '1', '--status', 'done'], dir);
+  assert.equal(setOk.ok, true);
+  assert.equal(setOk.data.status, 'done');
+
+  // 4. task-list reflects the status change persisted to disk
+  const listed = run(['task-list', '--tag', 'default'], dir);
+  assert.equal(listed.ok, true);
+  assert.equal(listed.data.stats.done, 1, '1 done task in stats');
+  assert.equal(listed.data.stats.pending, 1, '1 pending task in stats');
+  assert.equal(listed.data.stats.completionPercentage, 50, 'completion = 1/2 * 100 = 50');
+
+  // 5. task-next returns task 2 (task 1 is done, not pending)
+  const nextR = run(['task-next', '--tag', 'default'], dir);
+  assert.equal(nextR.ok, true);
+  assert.equal(nextR.data.task.id, '2', 'next returns task 2 (task 1 already done)');
+});
+
+// -- Atomic persistence ------------------------------------------------------
+
+test('atomic: tasks.json has sequential ids and valid JSON after multiple task-add calls', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+
+  run(['task-add', '--tag', 'default', '--title', 'Atomic task 1'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Atomic task 2'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Atomic task 3'], dir);
+
+  // The tasks.json must be valid JSON (not truncated/corrupted) with 3 tasks
+  const tasksJson = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8')
+  );
+  assert.equal(tasksJson['default'].tasks.length, 3, 'all 3 tasks persisted correctly');
+  assert.equal(tasksJson['default'].tasks[0].id, '1');
+  assert.equal(tasksJson['default'].tasks[1].id, '2');
+  assert.equal(tasksJson['default'].tasks[2].id, '3');
+});
