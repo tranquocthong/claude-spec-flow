@@ -74,6 +74,12 @@ If impact spans multiple nodes, or you're unsure, run the full steps below.
    - Manual-test gate (step 6) before each task advances to `done`.
 
 6. **Re-verify**
+   > **Golden rule — verify against latest `main`, never a stale branch base.** The re-verify gate MUST run on top of the latest base branch (`config.json → branching.base`, default `main`) **plus** your change — not the possibly-stale base the `change/*` branch was cut from (this matters most on `--resume`, where the branch is often behind `main`). Before running the checklist below, sync the work branch to latest base:
+   > ```bash
+   > BASE=$(node -e "try{console.log(require('./.spec-flow/config.json').branching?.base||'main')}catch(e){console.log('main')}")
+   > git fetch origin "$BASE" && git rebase "origin/$BASE"   # or: git merge "origin/$BASE" if the project prefers merge
+   > ```
+   > Resolve any conflicts, then re-run the change's build/unit tests before proceeding. Skip only when `branching.mode: off`. **Rationale:** a green result on a stale base can pass a change that breaks once merged onto current `main`; anchoring verification to main-latest + the change makes green reflect what will actually ship.
    ```
    scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --tag smoke --json | tee .spec-flow/specs/<feature>/change-results.txt
    ```
