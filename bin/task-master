@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+/**
+ * bin/task-master — CLI entry point for the native task manager.
+ *
+ * Thin executable: parses process.argv, delegates to lib/cli-dispatcher.cjs,
+ * writes stdout/stderr to the correct streams, and calls process.exit.
+ *
+ * ALL subcommand logic lives in lib/cli-dispatcher.cjs (runCli).
+ * This file is transport/process wiring only.
+ *
+ * Usage:  task-master <subcommand> [flags]
+ * See `task-master` (no args) for the full subcommand list.
+ */
+'use strict';
+
+const { runCli } = require('../lib/cli-dispatcher.cjs');
+
+runCli(process.argv.slice(2))
+  .then(({ stdout, stderr, exitCode }) => {
+    if (stdout) process.stdout.write(stdout);
+    if (stderr) process.stderr.write(stderr + (stderr.endsWith('\n') ? '' : '\n'));
+    process.exit(exitCode);
+  })
+  .catch((err) => {
+    // Defensive: runCli should not throw, but guard at the process boundary
+    const code = (err && err.code) || 'ERR_UNKNOWN';
+    const message = (err && err.message) || String(err);
+    process.stderr.write(`${code}: ${message}\n`);
+    process.exit(1);
+  });
