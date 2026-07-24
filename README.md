@@ -313,6 +313,11 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `verify-code [--feature <f>] [--repos "a,b"]` | **generic quality gate**: run tests, check coverage threshold, scan for forbidden patterns + secrets — driven by `.spec-flow/config.json → verify`; skips gracefully when unconfigured. **Multi-repo:** `--feature`/`--repos` scopes the scan to the repos that feature touched (from `file-links.json`) so an unrelated repo's red WIP can't poison the gate |
 | `status-report [--feature <f>]` | pure-read status aggregate: project, branch, feature, SD, tasks, trace, ready-set, verification, open bugs/changes, latest snapshot + a deterministic `nextStep` — the data source behind `/sf:status` |
 | `doctor [--sd <SD.md>] [--feature <f>]` | **health check**: env · plugin files · install state · project init · trace health · SD gate · tasks info |
+| `task-use-tag --tag <tagName>` | set the current tag in `.taskmaster/state.json`; auto-creates the tag namespace `{tasks:[],metadata:{}}` in `tasks.json` when absent — ops that omit `--tag` fall back to this tag (FR-002, FR-003) |
+| `task-add-dep --task-id <id> --dep-id <depId> --tag <tag>` | add `depId` to `taskId.dependencies[]` with full validation: tag exists, depId exists in tag, no cycle (iterative DFS); no-op if already present (FR-005..FR-007) |
+| `task-remove-dep --task-id <id> --dep-id <depId> --tag <tag>` | remove `depId` from `taskId.dependencies[]`; no-op if absent, no error (FR-008) |
+| `task-add-subtask --parent-id <id> --title <t> --tag <tag> [--description <d>] [--details <d>]` | append a subtask to the parent's `subtasks[]`; id derived as `<parentId>.<n>` (n = current subtask count + 1); returns the created subtask (FR-010) |
+| `task-expand --task-id <id> --subtasks <json-file> --tag <tag>` | read a JSON array `[{title, description?, ...}]` from file and append all entries to the parent's `subtasks[]` with sequentially derived ids; existing subtasks are preserved — append-only (FR-012, FR-013) |
 
 </details>
 
@@ -411,9 +416,14 @@ skills/commit/     bundled conventional-commit + push skill (VCS-agnostic, base-
 agents/           sd-author (SRS→clean SD) · hybrid-executor (impl one task)
 hooks/            checklist-to-verification (PostToolUse) · sd-drift-detect (PreToolUse) · spec-flow-anchor (UserPromptSubmit: session-wide config.language + flow re-anchor)
 bin/flow-tools.cjs  thin CLI entry + workflow commands (trace/verify/checklist/state/bug/epic/branch/status)
-lib/core.cjs        shared infra + SRS/SD parsers + genSd (no command logic)
-lib/maintenance.cjs static, non-workflow commands: init · init-project · learn · doctor
-lib/drift.cjs       Layer-2 semantic drift-check (drift-check command)
+lib/core.cjs             shared infra + SRS/SD parsers + genSd (no command logic)
+lib/maintenance.cjs      static, non-workflow commands: init · init-project · learn · doctor
+lib/drift.cjs            Layer-2 semantic drift-check (drift-check command)
+lib/task-core.cjs        native task storage + CRUD — zero-network, drop-in StorageCore (sub 1/5)
+lib/tag-manager.cjs      TagManager — tag resolution, state.json read/write, namespace auto-create (sub 2/5)
+lib/dependency-manager.cjs  DependencyManager — add/remove deps, iterative DFS cycle detection, intra-tag (sub 2/5)
+lib/subtask-manager.cjs  SubtaskManager — hierarchical id derivation, computeCompletion (sub 2/5)
+lib/expand-hook.cjs      ExpandHook — validate + delegate structured subtask lists to SubtaskManager (sub 2/5)
 templates/        sd-template.md · srs-template.md · lang/{en,vi}.json (SRS-parse keyword packs)
 test/             *.test.cjs — flow-tools (CLI) · core · maintenance unit suites (`node --test test/*.test.cjs`)
 .mcp.json         wires Task Master via npx

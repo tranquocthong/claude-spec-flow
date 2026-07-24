@@ -2154,3 +2154,495 @@ test('atomic: tasks.json has sequential ids and valid JSON after multiple task-a
   assert.equal(tasksJson['default'].tasks[1].id, '2');
   assert.equal(tasksJson['default'].tasks[2].id, '3');
 });
+
+// ---------------------------------------------------------------------------
+// task-use-tag / task-add-dep / task-remove-dep / task-add-subtask / task-expand
+// (Task #6 — wires TagManager, DependencyManager, SubtaskManager, ExpandHook
+//  into flow-tools.cjs — additive only; no existing command modified)
+//
+// Tests cover: ok/err shape, error-code mapping, MISSING_ARG guards, and a
+// multi-step E2E persistence check (use-tag → add-subtask → add-dep).
+// ---------------------------------------------------------------------------
+
+// -- task-use-tag ------------------------------------------------------------
+
+test('task-use-tag: writes currentTag to state.json (FR-002)', () => {
+  const dir = tmpProject();
+  const r = run(['task-use-tag', '--tag', 'feat-x'], dir);
+  assert.equal(r.ok, true, 'task-use-tag ok');
+  assert.equal(r.data.tag, 'feat-x', 'data.tag reflects the set tag');
+  // Verify state.json was actually written to disk
+  const state = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'state.json'), 'utf8')
+  );
+  assert.equal(state.currentTag, 'feat-x', 'state.json.currentTag persisted');
+});
+
+test('task-use-tag: auto-creates tag namespace in tasks.json (FR-003)', () => {
+  const dir = tmpProject();
+  run(['task-use-tag', '--tag', 'brand-new'], dir);
+  const tasksJson = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8')
+  );
+  assert.ok(tasksJson['brand-new'], 'brand-new namespace exists');
+  assert.deepEqual(tasksJson['brand-new'].tasks, [], 'namespace has empty tasks array');
+});
+
+test('task-use-tag: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-use-tag'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- task-add-dep ------------------------------------------------------------
+
+test('task-add-dep: adds dependency and returns ok (FR-005, TC-007)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  // Seed two tasks
+  run(['task-add', '--tag', 'default', '--title', 'Task 1'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task 2'], dir);
+  // Add dep: task 1 depends on task 2
+  const r = run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'default'], dir);
+  assert.equal(r.ok, true, 'task-add-dep ok');
+  assert.equal(r.data.taskId, '1');
+  assert.equal(r.data.depId, '2');
+  // Verify dependency persisted in tasks.json
+  const tasksJson = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8')
+  );
+  assert.deepEqual(tasksJson['default'].tasks[0].dependencies, ['2'], 'dep persisted');
+});
+
+test('task-add-dep: no-op when dep already present (FR-005, TC-008)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task 1'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task 2'], dir);
+  run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'default'], dir);
+  // Add the same dep again — must be no-op
+  const r2 = run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'default'], dir);
+  assert.equal(r2.ok, true, 'second task-add-dep no-op ok');
+  const tasksJson = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8')
+  );
+  assert.equal(tasksJson['default'].tasks[0].dependencies.length, 1, 'no duplicate dep');
+});
+
+test('task-add-dep: ERR_TAG_NOT_FOUND when tag absent (FR-004, TC-006)', () => {
+  const dir = tmpProject();
+  // No task-use-tag, no tag namespace exists
+  const r = run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'ghost-tag'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_TAG_NOT_FOUND/);
+});
+
+test('task-add-dep: ERR_DEP_NOT_FOUND when depId absent (FR-007, TC-009)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task 1'], dir);
+  const r = run(['task-add-dep', '--task-id', '1', '--dep-id', '999', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_DEP_NOT_FOUND/);
+});
+
+test('task-add-dep: ERR_DEP_CYCLE on direct cycle (FR-006, TC-010)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task A'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task B'], dir);
+  // A → B
+  run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'default'], dir);
+  // B → A would form a cycle
+  const r = run(['task-add-dep', '--task-id', '2', '--dep-id', '1', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_DEP_CYCLE/);
+});
+
+test('task-add-dep: ERR_DEP_CYCLE on indirect cycle (FR-006, TC-011)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task A'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task B'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task C'], dir);
+  // A → B, B → C
+  run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'default'], dir);
+  run(['task-add-dep', '--task-id', '2', '--dep-id', '3', '--tag', 'default'], dir);
+  // C → A would form an indirect cycle
+  const r = run(['task-add-dep', '--task-id', '3', '--dep-id', '1', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_DEP_CYCLE/);
+});
+
+test('task-add-dep: cross-tag dep rejected as ERR_DEP_NOT_FOUND (FR-009, TC-014)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'tagA');
+  run(['task-use-tag', '--tag', 'tagA'], dir);
+  run(['task-use-tag', '--tag', 'tagB'], dir);
+  // Add task 1 in tagA, task 2 in tagB
+  run(['task-add', '--tag', 'tagA', '--title', 'Task in A'], dir);
+  run(['task-add', '--tag', 'tagB', '--title', 'Task in B'], dir);
+  // task 2 in tagA does not exist — cross-tag dep should fail
+  const r = run(['task-add-dep', '--task-id', '1', '--dep-id', '1', '--tag', 'tagA'], dir);
+  // Dep from task1 to task1 is itself — but task 1 in tagA exists. We need to try
+  // to dep to task 1 from tagB (which doesn't exist in tagA namespace).
+  // tagA has task '1', tagB has task '1' too, so let's add another to tagB.
+  run(['task-add', '--tag', 'tagB', '--title', 'Task 2 in B'], dir);
+  // Task '2' exists only in tagB, not tagA
+  const r2 = run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'tagA'], dir);
+  assert.equal(r2.ok, false, 'cross-tag dep rejected');
+  assert.match(r2.error, /ERR_DEP_NOT_FOUND/, 'error is ERR_DEP_NOT_FOUND');
+});
+
+test('task-add-dep: missing --task-id returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-add-dep', '--dep-id', '2', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*task-id/i);
+});
+
+test('task-add-dep: missing --dep-id returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-add-dep', '--task-id', '1', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*dep-id/i);
+});
+
+test('task-add-dep: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-add-dep', '--task-id', '1', '--dep-id', '2'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- task-remove-dep ---------------------------------------------------------
+
+test('task-remove-dep: removes dep and returns ok (FR-008, TC-012)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task 1'], dir);
+  run(['task-add', '--tag', 'default', '--title', 'Task 2'], dir);
+  run(['task-add-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'default'], dir);
+  // Remove the dep
+  const r = run(['task-remove-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'default'], dir);
+  assert.equal(r.ok, true, 'task-remove-dep ok');
+  const tasksJson = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8')
+  );
+  assert.deepEqual(tasksJson['default'].tasks[0].dependencies, [], 'dep removed');
+});
+
+test('task-remove-dep: no-op when depId not in list (FR-008, TC-013)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task 1'], dir);
+  // Remove a dep that was never added — must be ok, no error
+  const r = run(['task-remove-dep', '--task-id', '1', '--dep-id', '999', '--tag', 'default'], dir);
+  assert.equal(r.ok, true, 'task-remove-dep no-op ok');
+});
+
+test('task-remove-dep: ERR_TAG_NOT_FOUND when tag absent', () => {
+  const dir = tmpProject();
+  const r = run(['task-remove-dep', '--task-id', '1', '--dep-id', '2', '--tag', 'ghost-tag'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_TAG_NOT_FOUND/);
+});
+
+test('task-remove-dep: ERR_DEP_NOT_FOUND when taskId absent', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Task 1'], dir);
+  const r = run(['task-remove-dep', '--task-id', '999', '--dep-id', '1', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_DEP_NOT_FOUND/);
+});
+
+test('task-remove-dep: missing --task-id returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-remove-dep', '--dep-id', '2', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*task-id/i);
+});
+
+test('task-remove-dep: missing --dep-id returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-remove-dep', '--task-id', '1', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*dep-id/i);
+});
+
+test('task-remove-dep: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-remove-dep', '--task-id', '1', '--dep-id', '2'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- task-add-subtask --------------------------------------------------------
+
+test('task-add-subtask: creates subtask with hierarchical id "1.1" (FR-010, TC-015)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Parent task'], dir);
+  const r = run([
+    'task-add-subtask',
+    '--parent-id', '1',
+    '--title', 'First subtask',
+    '--tag', 'default',
+  ], dir);
+  assert.equal(r.ok, true, 'task-add-subtask ok');
+  assert.equal(r.data.id, '1.1', 'subtask id is 1.1');
+  assert.equal(r.data.title, 'First subtask');
+  assert.equal(r.data.status, 'pending', 'default status is pending');
+});
+
+test('task-add-subtask: sequential id "1.3" after two existing subtasks (FR-010, TC-016)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Parent task'], dir);
+  run(['task-add-subtask', '--parent-id', '1', '--title', 'Sub A', '--tag', 'default'], dir);
+  run(['task-add-subtask', '--parent-id', '1', '--title', 'Sub B', '--tag', 'default'], dir);
+  const r = run(['task-add-subtask', '--parent-id', '1', '--title', 'Sub C', '--tag', 'default'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.id, '1.3', 'third subtask gets id 1.3');
+});
+
+test('task-add-subtask: accepts --description and --details fields', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Parent task'], dir);
+  const r = run([
+    'task-add-subtask',
+    '--parent-id', '1',
+    '--title', 'Detailed sub',
+    '--description', 'Describe it',
+    '--details', 'Deep details here',
+    '--tag', 'default',
+  ], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.description, 'Describe it');
+  assert.equal(r.data.details, 'Deep details here');
+});
+
+test('task-add-subtask: ERR_TAG_NOT_FOUND when tag absent', () => {
+  const dir = tmpProject();
+  const r = run([
+    'task-add-subtask',
+    '--parent-id', '1',
+    '--title', 'Sub',
+    '--tag', 'ghost-tag',
+  ], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_TAG_NOT_FOUND/);
+});
+
+test('task-add-subtask: ERR_TASK_NOT_FOUND when parent task absent', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Existing task'], dir);
+  const r = run([
+    'task-add-subtask',
+    '--parent-id', '999',
+    '--title', 'Orphan sub',
+    '--tag', 'default',
+  ], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_TASK_NOT_FOUND/);
+});
+
+test('task-add-subtask: missing --parent-id returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-add-subtask', '--title', 'Sub', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*parent-id/i);
+});
+
+test('task-add-subtask: missing --title returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-add-subtask', '--parent-id', '1', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*title/i);
+});
+
+test('task-add-subtask: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-add-subtask', '--parent-id', '1', '--title', 'Sub'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- task-expand -------------------------------------------------------------
+
+test('task-expand: creates multiple subtasks from JSON file (FR-012, TC-019)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Parent task'], dir);
+  // Write subtasks JSON file
+  const subtasksFile = path.join(dir, 'subtasks.json');
+  fs.writeFileSync(subtasksFile, JSON.stringify([
+    { title: 'Sub A' },
+    { title: 'Sub B', description: 'B desc' },
+  ]));
+  const r = run([
+    'task-expand',
+    '--task-id', '1',
+    '--subtasks', subtasksFile,
+    '--tag', 'default',
+  ], dir);
+  assert.equal(r.ok, true, 'task-expand ok');
+  assert.equal(r.data.created.length, 2, '2 subtasks created');
+  assert.equal(r.data.created[0].id, '1.1');
+  assert.equal(r.data.created[1].id, '1.2');
+});
+
+test('task-expand: appends to existing subtasks (FR-013, TC-020)', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Parent task'], dir);
+  // First expansion
+  const file1 = path.join(dir, 'subs1.json');
+  fs.writeFileSync(file1, JSON.stringify([{ title: 'First sub' }]));
+  run(['task-expand', '--task-id', '1', '--subtasks', file1, '--tag', 'default'], dir);
+  // Second expansion — must append, not overwrite
+  const file2 = path.join(dir, 'subs2.json');
+  fs.writeFileSync(file2, JSON.stringify([{ title: 'Second sub' }]));
+  const r = run(['task-expand', '--task-id', '1', '--subtasks', file2, '--tag', 'default'], dir);
+  assert.equal(r.ok, true, 'second task-expand ok');
+  assert.equal(r.data.created[0].id, '1.2', 'second sub gets id 1.2 (appended after 1.1)');
+  // Verify tasks.json has both subtasks
+  const tasksJson = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8')
+  );
+  assert.equal(tasksJson['default'].tasks[0].subtasks.length, 2, 'both subtasks present');
+});
+
+test('task-expand: ERR_INVALID_SUBTASKS when element missing title', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'Parent'], dir);
+  const subtasksFile = path.join(dir, 'bad.json');
+  fs.writeFileSync(subtasksFile, JSON.stringify([{ description: 'no title here' }]));
+  const r = run([
+    'task-expand',
+    '--task-id', '1',
+    '--subtasks', subtasksFile,
+    '--tag', 'default',
+  ], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_INVALID_SUBTASKS/);
+});
+
+test('task-expand: ERR_SUBTASKS_FILE when --subtasks file does not exist', () => {
+  const dir = tmpProject();
+  const r = run([
+    'task-expand',
+    '--task-id', '1',
+    '--subtasks', '/nonexistent/subtasks.json',
+    '--tag', 'default',
+  ], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_SUBTASKS_FILE/);
+});
+
+test('task-expand: ERR_TAG_NOT_FOUND when tag absent', () => {
+  const dir = tmpProject();
+  const subtasksFile = path.join(dir, 'subs.json');
+  fs.writeFileSync(subtasksFile, JSON.stringify([{ title: 'Sub' }]));
+  const r = run([
+    'task-expand',
+    '--task-id', '1',
+    '--subtasks', subtasksFile,
+    '--tag', 'ghost-tag',
+  ], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_TAG_NOT_FOUND/);
+});
+
+test('task-expand: ERR_TASK_NOT_FOUND when parent absent', () => {
+  const dir = tmpProject();
+  seedState(dir, 'default');
+  run(['task-add', '--tag', 'default', '--title', 'A task'], dir);
+  const subtasksFile = path.join(dir, 'subs.json');
+  fs.writeFileSync(subtasksFile, JSON.stringify([{ title: 'Sub' }]));
+  const r = run([
+    'task-expand',
+    '--task-id', '999',
+    '--subtasks', subtasksFile,
+    '--tag', 'default',
+  ], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ERR_TASK_NOT_FOUND/);
+});
+
+test('task-expand: missing --task-id returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const subtasksFile = path.join(dir, 'subs.json');
+  fs.writeFileSync(subtasksFile, JSON.stringify([{ title: 'Sub' }]));
+  const r = run(['task-expand', '--subtasks', subtasksFile, '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*task-id/i);
+});
+
+test('task-expand: missing --subtasks returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const r = run(['task-expand', '--task-id', '1', '--tag', 'default'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*subtasks/i);
+});
+
+test('task-expand: missing --tag returns err MISSING_ARG', () => {
+  const dir = tmpProject();
+  const subtasksFile = path.join(dir, 'subs.json');
+  fs.writeFileSync(subtasksFile, JSON.stringify([{ title: 'Sub' }]));
+  const r = run(['task-expand', '--task-id', '1', '--subtasks', subtasksFile], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG.*tag/i);
+});
+
+// -- E2E: task-use-tag → task-add → task-add-subtask → task-add-dep ---------
+
+test('E2E: use-tag → add → add-subtask → add-dep persists state across CLI calls (FR-002, FR-005, FR-010)', () => {
+  const dir = tmpProject();
+
+  // 1. Set the current tag
+  const useTagR = run(['task-use-tag', '--tag', 'e2e-feature'], dir);
+  assert.equal(useTagR.ok, true, 'task-use-tag ok');
+
+  // 2. Add two tasks (tag resolves from state.json because we do not pass --tag)
+  const t1 = run(['task-add', '--tag', 'e2e-feature', '--title', 'Task One'], dir);
+  assert.equal(t1.ok, true);
+  assert.equal(t1.data.id, '1');
+  const t2 = run(['task-add', '--tag', 'e2e-feature', '--title', 'Task Two'], dir);
+  assert.equal(t2.ok, true);
+  assert.equal(t2.data.id, '2');
+
+  // 3. Add subtask to task 1
+  const sub = run([
+    'task-add-subtask',
+    '--parent-id', '1',
+    '--title', 'Subtask of Task One',
+    '--tag', 'e2e-feature',
+  ], dir);
+  assert.equal(sub.ok, true, 'task-add-subtask ok');
+  assert.equal(sub.data.id, '1.1', 'subtask id is 1.1');
+
+  // 4. Add dependency: task 1 depends on task 2
+  const dep = run([
+    'task-add-dep',
+    '--task-id', '1',
+    '--dep-id', '2',
+    '--tag', 'e2e-feature',
+  ], dir);
+  assert.equal(dep.ok, true, 'task-add-dep ok');
+
+  // 5. Verify final state in tasks.json
+  const tasksJson = JSON.parse(
+    fs.readFileSync(path.join(dir, '.taskmaster', 'tasks', 'tasks.json'), 'utf8')
+  );
+  const tag = tasksJson['e2e-feature'];
+  assert.ok(tag, 'e2e-feature namespace exists');
+  assert.equal(tag.tasks[0].subtasks.length, 1, 'task 1 has 1 subtask');
+  assert.equal(tag.tasks[0].subtasks[0].id, '1.1', 'subtask id correct');
+  assert.deepEqual(tag.tasks[0].dependencies, ['2'], 'task 1 depends on task 2');
+});

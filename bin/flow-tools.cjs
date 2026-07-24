@@ -24,6 +24,10 @@ const {
 const maintenance = require('../lib/maintenance.cjs');
 const drift = require('../lib/drift.cjs');
 const taskCore = require('../lib/task-core.cjs');
+const tagManager = require('../lib/tag-manager.cjs');
+const dependencyManager = require('../lib/dependency-manager.cjs');
+const subtaskManager = require('../lib/subtask-manager.cjs');
+const { expandHook } = require('../lib/expand-hook.cjs');
 
 // =====================================================================
 //  COMMANDS (workflow). Static commands live in lib/maintenance.cjs;
@@ -2463,6 +2467,134 @@ const commands = {
     try {
       const task = taskCore.updateTask(args.tag, args.id, fields);
       return ok(task);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  // ---------------------------------------------------------------------------
+  // TagManager / DependencyManager / SubtaskManager / ExpandHook wrappers
+  // (Task #6 — additive only; no existing command modified)
+  //
+  // Collision check: none of these names exist in the commands object above.
+  //   task-use-tag    — new (TagManager.useTag)
+  //   task-add-dep    — new (DependencyManager.addDependency)
+  //   task-remove-dep — new (DependencyManager.removeDependency)
+  //   task-add-subtask — new (SubtaskManager.addSubtask)
+  //   task-expand     — new (ExpandHook.expandHook)
+  //
+  // Each wrapper: parse args with the existing parseArgs result, call the module
+  // fn in try/catch, map thrown Error.code → err(...), return ok(data) on success.
+  // Require cycles: lib modules already require task-core; requiring them from bin
+  // is one-way (bin → lib), so no cycle.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * task-use-tag  --tag <tagName>
+   *
+   * Sets the current tag in .taskmaster/state.json and auto-creates the tag
+   * namespace in tasks.json if it does not exist (FR-002, FR-003, SD §9.2).
+   */
+  'task-use-tag'(args) {
+    if (!args.tag) return err('MISSING_ARG: --tag <tagName>');
+    try {
+      tagManager.useTag(args.tag);
+      return ok({ tag: args.tag });
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-add-dep  --task-id <taskId>  --dep-id <depId>  --tag <tag>
+   *
+   * Adds depId to taskId.dependencies[] with full validation: tag existence,
+   * depId existence, and iterative DFS cycle detection (FR-005..FR-009, SD §9.2).
+   * No-op (ok) if depId is already present in the list.
+   */
+  'task-add-dep'(args) {
+    if (!args['task-id']) return err('MISSING_ARG: --task-id <taskId>');
+    if (!args['dep-id']) return err('MISSING_ARG: --dep-id <depId>');
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    try {
+      dependencyManager.addDependency(args['task-id'], args['dep-id'], args.tag);
+      return ok({ taskId: args['task-id'], depId: args['dep-id'], tag: args.tag });
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-remove-dep  --task-id <taskId>  --dep-id <depId>  --tag <tag>
+   *
+   * Removes depId from taskId.dependencies[]. No-op (ok) if depId is not in
+   * the list. Throws ERR_TAG_NOT_FOUND or ERR_DEP_NOT_FOUND when task is absent
+   * (FR-008, SD §9.2).
+   */
+  'task-remove-dep'(args) {
+    if (!args['task-id']) return err('MISSING_ARG: --task-id <taskId>');
+    if (!args['dep-id']) return err('MISSING_ARG: --dep-id <depId>');
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    try {
+      dependencyManager.removeDependency(args['task-id'], args['dep-id'], args.tag);
+      return ok({ taskId: args['task-id'], depId: args['dep-id'], tag: args.tag });
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-add-subtask  --parent-id <parentId>  --title <title>  --tag <tag>
+   *                   [--description <desc>]  [--details <details>]
+   *
+   * Appends a subtask to the parent task's subtasks[] with a derived hierarchical
+   * id "${parentId}.${n}" (FR-010, SD §9.2). Returns the created subtask object.
+   */
+  'task-add-subtask'(args) {
+    if (!args['parent-id']) return err('MISSING_ARG: --parent-id <parentId>');
+    if (!args.title) return err('MISSING_ARG: --title <title>');
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    const subtaskData = {
+      title: args.title,
+      description: args.description,
+      details: args.details,
+    };
+    try {
+      const subtask = subtaskManager.addSubtask(args['parent-id'], subtaskData, args.tag);
+      return ok(subtask);
+    } catch (e) {
+      return err(`${e.code || 'ERR'}: ${e.message}`);
+    }
+  },
+
+  /**
+   * task-expand  --task-id <taskId>  --subtasks <json-file>  --tag <tag>
+   *
+   * Reads a JSON file containing an array of subtask descriptors and appends them
+   * all to the parent task's subtasks[] with sequentially derived ids (FR-012,
+   * FR-013, SD §9.2). Each element must have { title: string }. Returns the array
+   * of created subtask objects as data.created.
+   *
+   * Errors mapped:
+   *   ERR_SUBTASKS_FILE    — --subtasks file cannot be read or parsed as JSON
+   *   ERR_INVALID_SUBTASKS — propagated from expandHook (missing title field)
+   *   ERR_TAG_NOT_FOUND    — propagated from expandHook
+   *   ERR_TASK_NOT_FOUND   — propagated from expandHook
+   */
+  'task-expand'(args) {
+    if (!args['task-id']) return err('MISSING_ARG: --task-id <taskId>');
+    if (!args.subtasks) return err('MISSING_ARG: --subtasks <json-file>');
+    if (!args.tag) return err('MISSING_ARG: --tag <tag>');
+    let subtasksInput;
+    try {
+      const raw = fs.readFileSync(args.subtasks, 'utf8');
+      subtasksInput = JSON.parse(raw);
+    } catch (e) {
+      return err(`ERR_SUBTASKS_FILE: Cannot read --subtasks file "${args.subtasks}": ${e.message}`);
+    }
+    try {
+      const created = expandHook(args['task-id'], subtasksInput, args.tag);
+      return ok({ created });
     } catch (e) {
       return err(`${e.code || 'ERR'}: ${e.message}`);
     }

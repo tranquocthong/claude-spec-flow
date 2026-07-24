@@ -1585,3 +1585,86 @@ test('updateTask finds the task when id is passed as a number instead of a strin
   );
   assert.equal(result.description, 'updated', 'task description must be updated when id is numeric');
 });
+
+// ---------------------------------------------------------------------------
+// Task #4 — nextTask completionPercentage integration (FR-011)
+//
+// nextTask must attach a completionPercentage field to the returned task,
+// computed via computeCompletion from subtask-manager.cjs (subtask-aware).
+//
+// TC-new-1: nextTask result task carries a completionPercentage field
+// TC-new-2: task with 2/4 done subtasks → completionPercentage = 50
+// TC-new-3: task with no subtasks and pending status → completionPercentage = 0
+// ---------------------------------------------------------------------------
+
+const t4cTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-core-t4c-'));
+
+function t4cFile(suffix) {
+  return path.join(t4cTmpDir, `tasks-${suffix}.json`);
+}
+
+function makeT4cTagData(tasks) {
+  return { 'ctag': { tasks, metadata: {} } };
+}
+
+function makeT4cTask(id, status, priority, subtasks, deps) {
+  return {
+    id: String(id),
+    title: `Task ${id}`,
+    description: '',
+    details: '',
+    testStrategy: '',
+    priority: priority || 'medium',
+    dependencies: deps || [],
+    status,
+    subtasks: subtasks || [],
+    updatedAt: '2026-07-24T00:00:00.000Z',
+  };
+}
+
+// TC-new-1: nextTask result carries completionPercentage on the returned task (FR-011)
+test('nextTask result task carries a completionPercentage field (FR-011)', () => {
+  const tasksFile = t4cFile('has-completion-pct');
+  taskCore._writeTasksFileAtomic(tasksFile, makeT4cTagData([
+    makeT4cTask('1', 'pending', 'medium', []),
+  ]));
+
+  const result = taskCore.nextTask('ctag', { tasksFile });
+  assert.ok(result && result.task, 'nextTask must return a task');
+  assert.ok(
+    'completionPercentage' in result.task,
+    'returned task must have a completionPercentage field'
+  );
+});
+
+// TC-new-2: task with 2/4 done subtasks → completionPercentage = 50 (FR-011)
+test('nextTask returns completionPercentage=50 for a task with 2 of 4 done subtasks (FR-011)', () => {
+  const tasksFile = t4cFile('half-done-subtasks');
+  const subtasks = [
+    { id: '1', title: 'Sub 1', status: 'done', updatedAt: '2026-07-24T00:00:00.000Z' },
+    { id: '2', title: 'Sub 2', status: 'done', updatedAt: '2026-07-24T00:00:00.000Z' },
+    { id: '3', title: 'Sub 3', status: 'pending', updatedAt: '2026-07-24T00:00:00.000Z' },
+    { id: '4', title: 'Sub 4', status: 'pending', updatedAt: '2026-07-24T00:00:00.000Z' },
+  ];
+  taskCore._writeTasksFileAtomic(tasksFile, makeT4cTagData([
+    makeT4cTask('1', 'pending', 'medium', subtasks),
+  ]));
+
+  const result = taskCore.nextTask('ctag', { tasksFile });
+  assert.ok(result && result.task, 'nextTask must return a task');
+  assert.equal(result.task.completionPercentage, 50,
+    'completionPercentage must be 50 for 2 of 4 done subtasks');
+});
+
+// TC-new-3: task with no subtasks and pending status → completionPercentage = 0 (FR-011)
+test('nextTask returns completionPercentage=0 for a task with no subtasks and pending status (FR-011)', () => {
+  const tasksFile = t4cFile('no-subtasks-pending');
+  taskCore._writeTasksFileAtomic(tasksFile, makeT4cTagData([
+    makeT4cTask('1', 'pending', 'medium', []),
+  ]));
+
+  const result = taskCore.nextTask('ctag', { tasksFile });
+  assert.ok(result && result.task, 'nextTask must return a task');
+  assert.equal(result.task.completionPercentage, 0,
+    'completionPercentage must be 0 for a task with no subtasks and pending status');
+});
