@@ -112,6 +112,13 @@ Log the fix attempt in "## Resolution log:" with a timestamp and summary of chan
 
 ## STEP 5 — VERIFY (repro test must PASS)
 
+> **Golden rule — verify against latest `main`, never a stale branch base.** The verify gate MUST run on top of the latest base branch (`config.json → branching.base`, default `main`) **plus** your fix — not the possibly-stale base the `fix/*` branch was cut from (this matters most on `--resume`, where the branch is often behind `main`). Before running the checklist below, sync the work branch to latest base:
+> ```bash
+> BASE=$(node -e "try{console.log(require('./.spec-flow/config.json').branching?.base||'main')}catch(e){console.log('main')}")
+> git fetch origin "$BASE" && git rebase "origin/$BASE"   # or: git merge "origin/$BASE" if the project prefers merge
+> ```
+> Resolve any conflicts, then re-run the fix's build/unit tests before proceeding. Skip only when `branching.mode: off`. **Rationale:** a green result on a stale base can (a) "reproduce"/verify against a bug already fixed on `main`, or (b) pass a fix that breaks once merged onto current `main`. Anchoring verification to main-latest + the fix makes green reflect what will actually ship.
+
 ```bash
 scripts/run-checklist.sh .spec-flow/specs/<feature>/CHECKLIST.yaml --id <bug-id> --json | tee .spec-flow/specs/<feature>/bug-<bug-id>-results.txt
 ```
