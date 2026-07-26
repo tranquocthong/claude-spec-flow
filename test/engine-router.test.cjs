@@ -347,30 +347,37 @@ test('(c) engine=native + use-tag: calls useTag and creates tag namespace', asyn
 });
 
 // ---------------------------------------------------------------------------
-// (d) engine=native + AI op with ai-hybrid missing → ERR_AI_HOST_REQUIRED
-// The router must lazy-require('./ai-hybrid.cjs') and catch the MODULE_NOT_FOUND
-// error, returning { error: { code: 'ERR_AI_HOST_REQUIRED', ... } }.
+// (d) engine=native + AI op → ERR_AI_HOST_REQUIRED
+// The router lazy-requires ai-hybrid.cjs which delegates to AIRouter.
+// Since CLAUDECODE may be set in this environment (agent session), we must
+// force no-host by passing _inject._env={} through the args — engine-router
+// forwards the entire args object to aiHybrid.dispatch, which passes _inject
+// to AIRouter.route. Without _inject._env, the ambient CLAUDECODE=1 would
+// cause the agent-native path to run (emitting a spec) instead of throwing.
+// The config file sets only engine=native; ai-config defaults aiMode to
+// 'agent-native' with headlessFallback:null → ERR_AI_HOST_REQUIRED.
 // ---------------------------------------------------------------------------
 
-test('(d) engine=native + AI op (expand): returns ERR_AI_HOST_REQUIRED when ai-hybrid is absent', async () => {
+test('(d) engine=native + AI op (expand): returns ERR_AI_HOST_REQUIRED (forced no-host env)', async () => {
   const tmpDir = makeTmpDir();
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
 
-  // ai-hybrid.cjs does not exist — this must be caught gracefully
+  // Force no-host via _inject._env={} so AIRouter sees no CLAUDECODE/SPEC_FLOW_HOST_AGENT.
   const result = await engineRouter.routeToEngine('expand', {
     tag: 'main',
     taskId: '1',
     _paths,
     _configFile,
+    _inject: { _env: {} },
   });
 
   assert.ok(result && result.error, 'result must have an error field');
   assert.equal(result.error.code, 'ERR_AI_HOST_REQUIRED',
-    'error.code must be ERR_AI_HOST_REQUIRED when ai-hybrid.cjs is missing');
+    'error.code must be ERR_AI_HOST_REQUIRED when no host is present and no fallback');
 });
 
-test('(d) engine=native + AI op (parse-prd): returns ERR_AI_HOST_REQUIRED', async () => {
+test('(d) engine=native + AI op (parse-prd): returns ERR_AI_HOST_REQUIRED (forced no-host env)', async () => {
   const tmpDir = makeTmpDir();
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
@@ -379,11 +386,12 @@ test('(d) engine=native + AI op (parse-prd): returns ERR_AI_HOST_REQUIRED', asyn
     tag: 'main',
     _paths,
     _configFile,
+    _inject: { _env: {} },
   });
 
   assert.ok(result && result.error, 'result must have an error field');
   assert.equal(result.error.code, 'ERR_AI_HOST_REQUIRED',
-    'parse-prd with missing ai-hybrid must return ERR_AI_HOST_REQUIRED');
+    'parse-prd with no host and no fallback must return ERR_AI_HOST_REQUIRED');
 });
 
 // ---------------------------------------------------------------------------

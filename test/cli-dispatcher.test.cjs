@@ -194,6 +194,13 @@ test('(d) update-task missing --id: exits 1 with usage on stderr', async () => {
 
 // ---------------------------------------------------------------------------
 // (e) AI op with engine=native: prints ERR_AI_HOST_REQUIRED to stderr, exits 1
+//
+// These tests force no-host by including _inject: { _env: {} } in the inject
+// object. cli-dispatcher spreads _inject into args via Object.assign, so
+// args._inject becomes { _env: {} }, which flows through routeToEngine →
+// aiHybrid.dispatch → AIRouter.route where resolveHostPresence uses the empty
+// env dict (no CLAUDECODE) → no host detected → ERR_AI_HOST_REQUIRED.
+// This makes the tests deterministic regardless of ambient CLAUDECODE setting.
 // ---------------------------------------------------------------------------
 
 test('(e) parse-prd with engine=native: ERR_AI_HOST_REQUIRED on stderr and exits 1', async () => {
@@ -201,12 +208,17 @@ test('(e) parse-prd with engine=native: ERR_AI_HOST_REQUIRED on stderr and exits
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
 
+  // Seed an actual input file so file-reading succeeds; the no-host env then
+  // triggers ERR_AI_HOST_REQUIRED from AIRouter (not a file-not-found error).
+  const inputFile = path.join(tmpDir, 'spec.md');
+  fs.writeFileSync(inputFile, '# Requirements', 'utf8');
+
   const result = await runCli(
-    ['parse-prd', '--input', 'spec.md', '--tag', 'feat-x'],
-    { _configFile, _paths }
+    ['parse-prd', '--input', inputFile, '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: {} } }
   );
 
-  assert.equal(result.exitCode, 1, 'AI op must exit 1 when ai-hybrid is absent');
+  assert.equal(result.exitCode, 1, 'AI op must exit 1 when no host is present');
   assert.ok(
     result.stderr.includes('ERR_AI_HOST_REQUIRED'),
     `stderr must contain ERR_AI_HOST_REQUIRED; got: ${result.stderr}`
@@ -218,7 +230,10 @@ test('(e) analyze-complexity with engine=native: ERR_AI_HOST_REQUIRED on stderr 
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
 
-  const result = await runCli(['analyze-complexity', '--tag', 'feat-x'], { _configFile, _paths });
+  const result = await runCli(
+    ['analyze-complexity', '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: {} } }
+  );
 
   assert.equal(result.exitCode, 1, 'AI op must exit 1');
   assert.ok(
@@ -243,7 +258,18 @@ test('(e) expand with engine=native: ERR_AI_HOST_REQUIRED on stderr and exits 1'
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
 
-  const result = await runCli(['expand', '--id', '1', '--tag', 'feat-x'], { _configFile, _paths });
+  // Seed a task so parent-task lookup succeeds; the no-host env then triggers
+  // ERR_AI_HOST_REQUIRED from AIRouter (not a task-not-found error).
+  seedTask(_paths.tasksFile, 'feat-x', {
+    id: '1', title: 'Task', status: 'pending', priority: 'medium',
+    dependencies: [], subtasks: [], description: '', details: '',
+    testStrategy: '', updatedAt: new Date().toISOString(),
+  });
+
+  const result = await runCli(
+    ['expand', '--id', '1', '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: {} } }
+  );
 
   assert.equal(result.exitCode, 1, 'AI op must exit 1');
   assert.ok(
@@ -257,7 +283,10 @@ test('(e) research with engine=native: ERR_AI_HOST_REQUIRED on stderr and exits 
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
 
-  const result = await runCli(['research', 'how to do X', '--tag', 'feat-x'], { _configFile, _paths });
+  const result = await runCli(
+    ['research', 'how to do X', '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: {} } }
+  );
 
   assert.equal(result.exitCode, 1, 'AI op must exit 1');
   assert.ok(
@@ -271,7 +300,10 @@ test('(e) update with engine=native: ERR_AI_HOST_REQUIRED on stderr and exits 1'
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
 
-  const result = await runCli(['update', '--from', '1', '--tag', 'feat-x'], { _configFile, _paths });
+  const result = await runCli(
+    ['update', '--from', '1', '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: {} } }
+  );
 
   assert.equal(result.exitCode, 1, 'AI op must exit 1');
   assert.ok(
@@ -381,4 +413,97 @@ test('(h) no subcommand: exits 1 with usage on stderr', async () => {
 
   assert.equal(result.exitCode, 1, 'no subcommand must exit 1');
   assert.ok(result.stderr.length > 0, 'stderr must contain usage info');
+});
+
+// ---------------------------------------------------------------------------
+// (i) Agent-native AI ops: spec emitted via _stdout, handler exits 0 with empty stdout
+// ---------------------------------------------------------------------------
+
+test('(i) parse-prd with host present: spec emitted to _stdout, handler exits 0 with empty stdout', async () => {
+  const tmpDir = makeTmpDir();
+  const _paths = makePaths(tmpDir);
+  const _configFile = makeConfigFile(tmpDir, 'native');
+
+  const inputFile = path.join(tmpDir, 'requirements.md');
+  const fileContent = '# Feature: Add user login\n## Requirements\n- Users can log in with email';
+  fs.writeFileSync(inputFile, fileContent, 'utf8');
+
+  const captured = [];
+  const result = await runCli(
+    ['parse-prd', '--input', inputFile, '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: { CLAUDECODE: '1' }, _stdout: (s) => captured.push(s) } }
+  );
+
+  assert.equal(result.exitCode, 0, 'parse-prd with host present must exit 0');
+  assert.equal(result.stdout, '', 'handler stdout must be empty (spec was written via _stdout)');
+  assert.equal(captured.length, 1, 'AIRouter must write the spec to _stdout exactly once');
+
+  const spec = JSON.parse(captured[0]);
+  assert.equal(spec.operation, 'parse-prd', 'spec.operation must be parse-prd');
+  assert.equal(spec.inputContent, fileContent, 'spec.inputContent must equal the file content');
+  assert.equal(spec.tag, 'feat-x', 'spec.tag must be feat-x');
+});
+
+test('(i) parse-prd with non-existent --input file: exits 1 before routing', async () => {
+  const tmpDir = makeTmpDir();
+  const _paths = makePaths(tmpDir);
+  const _configFile = makeConfigFile(tmpDir, 'native');
+
+  const captured = [];
+  const missingFile = path.join(tmpDir, 'does-not-exist.md');
+
+  const result = await runCli(
+    ['parse-prd', '--input', missingFile, '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: { CLAUDECODE: '1' }, _stdout: (s) => captured.push(s) } }
+  );
+
+  assert.equal(result.exitCode, 1, 'missing file must exit 1 before routing');
+  assert.ok(
+    result.stderr.includes('cannot read'),
+    `stderr must mention "cannot read"; got: ${result.stderr}`
+  );
+  assert.equal(captured.length, 0, 'no spec must be emitted when file cannot be read');
+});
+
+test('(i) expand with host present: spec emitted with correct parentTaskId and existingSubtaskIds', async () => {
+  const tmpDir = makeTmpDir();
+  const _paths = makePaths(tmpDir);
+  const _configFile = makeConfigFile(tmpDir, 'native');
+
+  // Seed a parent task with 2 subtasks.
+  const parentTask = {
+    id: '1',
+    title: 'Parent task',
+    status: 'pending',
+    priority: 'medium',
+    dependencies: [],
+    subtasks: [
+      { id: '1', title: 'Subtask A', status: 'pending' },
+      { id: '2', title: 'Subtask B', status: 'pending' },
+    ],
+    description: 'Parent task description',
+    details: '',
+    testStrategy: '',
+    updatedAt: new Date().toISOString(),
+  };
+  seedTask(_paths.tasksFile, 'feat-x', parentTask);
+
+  const captured = [];
+  const result = await runCli(
+    ['expand', '--id', '1', '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: { CLAUDECODE: '1' }, _stdout: (s) => captured.push(s) } }
+  );
+
+  assert.equal(result.exitCode, 0, 'expand with host present must exit 0');
+  assert.equal(result.stdout, '', 'handler stdout must be empty (spec was written via _stdout)');
+  assert.equal(captured.length, 1, 'AIRouter must write the spec to _stdout exactly once');
+
+  const spec = JSON.parse(captured[0]);
+  assert.equal(spec.operation, 'expand', 'spec.operation must be expand');
+  assert.ok(spec.context, 'spec.context must be present');
+  assert.equal(spec.context.parentTaskId, '1', 'spec.context.parentTaskId must be "1"');
+  assert.equal(
+    spec.context.existingSubtaskIds.length, 2,
+    'spec.context.existingSubtaskIds must list both existing subtask ids'
+  );
 });

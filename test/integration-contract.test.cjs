@@ -550,12 +550,20 @@ test('TC-013 CLI parse-prd engine=native: routes to ai-hybrid stub → ERR_AI_HO
   const _paths = makePaths(tmpDir);
   const _configFile = makeConfigFile(tmpDir, 'native');
 
+  // Seed an actual input file so the handler's file-reading step succeeds.
+  // The no-host env (_env: {}) then causes ERR_AI_HOST_REQUIRED from AIRouter.
+  const inputFile = path.join(tmpDir, 'SD.md');
+  fs.writeFileSync(inputFile, '# Requirements', 'utf8');
+
+  // Force no-host via _inject._env={} so AIRouter.resolveHostPresence returns false.
+  // cli-dispatcher spreads _inject into args, so args._inject flows to AIRouter.
+  // This makes the test deterministic regardless of ambient CLAUDECODE env var.
   const result = await runCli(
-    ['parse-prd', '--input', 'SD.md', '--tag', 'feat-x'],
-    { _configFile, _paths },
+    ['parse-prd', '--input', inputFile, '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: {} } },
   );
 
-  assert.equal(result.exitCode, 1, 'parse-prd with stub ai-hybrid must exit 1');
+  assert.equal(result.exitCode, 1, 'parse-prd with no host agent must exit 1');
   assert.ok(
     result.stderr.includes('ERR_AI_HOST_REQUIRED'),
     `stderr must contain ERR_AI_HOST_REQUIRED; got: ${result.stderr}`,
