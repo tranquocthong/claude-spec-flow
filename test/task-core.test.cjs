@@ -43,9 +43,25 @@ test('VALID_PRIORITIES is exported as an array', () => {
   assert.ok(Array.isArray(taskCore.VALID_PRIORITIES), 'VALID_PRIORITIES must be an array');
 });
 
-test('VALID_PRIORITIES contains exactly the 3 expected values in priority order', () => {
-  const expected = ['high', 'medium', 'low'];
+test('VALID_PRIORITIES contains exactly the 4 expected values in priority order', () => {
+  const expected = ['critical', 'high', 'medium', 'low'];
   assert.deepEqual(taskCore.VALID_PRIORITIES, expected);
+});
+
+test('critical priority outranks high in nextTask (drop-in parity with task-master-ai@0.43.1)', () => {
+  const os = require('os');
+  const path = require('path');
+  const fs = require('fs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prio-'));
+  const tasksFile = path.join(dir, 'tasks.json');
+  fs.writeFileSync(tasksFile, JSON.stringify({
+    ptag: { tasks: [
+      { id: '1', title: 'high one', description: 'd', status: 'pending', priority: 'high', dependencies: [], subtasks: [], updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: '2', title: 'critical one', description: 'd', status: 'pending', priority: 'critical', dependencies: [], subtasks: [], updatedAt: '2026-01-01T00:00:00.000Z' },
+    ], metadata: {} },
+  }, null, 2));
+  const result = taskCore.nextTask('ptag', { tasksFile });
+  assert.equal(result.task.id, '2', 'critical-priority task must be selected over the high-priority one');
 });
 
 // ---------------------------------------------------------------------------
