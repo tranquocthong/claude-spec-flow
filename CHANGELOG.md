@@ -2,6 +2,17 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.6.0] — 2026-07-28
+
+**native-task-manager** — a self-built, zero-dependency drop-in replacement for the third-party `task-master-ai@0.43.1` task engine. Shipped **dark-launch**: `taskCore.engine` defaults to `legacy`, so nothing changes until a project opts in with `taskCore.engine: "native"`. Removing the old package (`DEPENDENCIES.md` pin + `.mcp.json` entry) is deferred until the native engine has soaked through real features — the rollback safety net stays.
+
+- **storage-core** (`lib/task-core.cjs`): atomic tag-keyed `tasks.json` store + 6 CRUD ops, byte-compatible with the legacy schema (reads legacy files with zero migration).
+- **tags-deps** (`lib/tag-manager.cjs`, `dependency-manager.cjs`, `subtask-manager.cjs`, `expand-hook.cjs`): tag isolation, dependency graph with cycle detection, subtasks.
+- **contract-shim** (`lib/mcp-server.cjs`, `engine-router.cjs`, `cli-dispatcher.cjs`): dependency-free JSON-RPC MCP server (5 tools) + 9-subcommand CLI + `models` no-op shim, byte-compatible with the legacy surface. No MCP SDK — pure Node, honoring the repo's zero-dependency convention.
+- **ai-hybrid** (`lib/ai-router.cjs`, `agent-native-driver.cjs`, `task-importer.cjs`, `headless-fallback-provider.cjs`, `two-phase.cjs`): agent-native AI ops (parse-prd/expand/analyze/research) driven by the orchestrator host as the LLM — zero-network core, host detected via `CLAUDECODE` / `SPEC_FLOW_HOST_AGENT`; optional minimal headless HTTP fallback (off by default). `ERR_AI_HOST_REQUIRED` instead of silently seeding zero tasks.
+- **cutover** (`lib/engine-selector.cjs`, `engine-bootstrap.cjs`, `equivalence-verify.cjs`, `doctor-contract.cjs`, `cutover-monitor.cjs` + `scripts/{cutover,rollback,remove-legacy-dep}.cjs`, `docs/cutover-runbook.md`): opt-in engine flip with a one-commit / one-revert flip, equivalence-verify go/no-go gate, `/sf:doctor` contract check, and instant rollback (shared schema, zero data loss).
+- Verified: 776 unit tests; live equivalence diff vs the real legacy CLI; sandbox flip→doctor→rollback rehearsal. Benchmarked **~29× faster per task op** (`~2.8s` npx-spawn per legacy CLI call → `~95ms` native).
+
 ## [0.5.18] — 2026-07-21
 
 New token-def form for `/sf:manual-test` auth, for services that expect a pre-minted JWT rather than a grant flow.
