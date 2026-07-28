@@ -501,6 +501,30 @@ test('(f) invocation context (operation name + tag) is logged before error propa
   );
 });
 
+test('(f) invocation log goes to stderr, NOT stdout (agent-native D7 stdout stays clean)', async () => {
+  const tmpDir = makeTmpDir();
+  const _paths = makePaths(tmpDir);
+  const _configFile = makeConfigFile(tmpDir, 'native');
+  const data = { main: { tasks: [{ id: '1', title: 't', description: 'd', status: 'pending', priority: 'high', dependencies: [], subtasks: [], updatedAt: '2026-01-01T00:00:00.000Z' }], metadata: {} } };
+  fs.mkdirSync(path.dirname(_paths.tasksFile), { recursive: true });
+  fs.writeFileSync(_paths.tasksFile, JSON.stringify(data, null, 2), 'utf8');
+
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  process.stdout.write = (c) => { stdoutChunks.push(String(c)); return true; };
+  process.stderr.write = (c) => { stderrChunks.push(String(c)); return true; };
+  try {
+    await engineRouter.routeToEngine('get_tasks', { tag: 'main', _paths, _configFile });
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+  }
+  assert.ok(!stdoutChunks.join('').includes('[engine-router]'), 'the [engine-router] invocation log must NOT appear on stdout');
+  assert.ok(stderrChunks.join('').includes('[engine-router]'), 'the invocation log must be written to stderr');
+});
+
 test('(f) config-missing warning is logged (operation=get_task, no config file)', async () => {
   const tmpDir = makeTmpDir();
   const _paths = makePaths(tmpDir);
