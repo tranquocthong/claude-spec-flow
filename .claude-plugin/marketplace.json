@@ -16,7 +16,7 @@
     }
   ],
   "_notes": {
-    "standalone": "spec-flow is self-contained: one `/plugin install sf` is all a team member needs. The manual-test and commit skills ship INSIDE this plugin (skills/manual-test, skills/commit). Branch policy (1 SD = 1 branch, no commit on base) is config-driven via .spec-flow/config.json → branching. Task Master is auto-fetched at runtime via `npx -y task-master-ai` declared in .mcp.json — no manual install.",
-    "member-prereqs": "node + npm (for npx Task Master) and the Claude Code CLI. No API key needed by default — /sf:init sets Task Master to the keyless `claude-code` provider (uses your Claude Code session). An ANTHROPIC_API_KEY / PERPLEXITY_API_KEY is optional, only if a member prefers their own provider."
+    "standalone": "spec-flow is self-contained: one `/plugin install sf` is all a team member needs. The manual-test and commit skills ship INSIDE this plugin (skills/manual-test, skills/commit). Branch policy (1 SD = 1 branch, no commit on base) is config-driven via .spec-flow/config.json → branching. The task engine is bundled and zero-network (bin/mcp-server.js, declared in .mcp.json) — no external package fetch, no manual install.",
+    "member-prereqs": "node >= 18 and the Claude Code CLI. No API key needed by default — /sf:init sets the task engine to the keyless `claude-code` provider (uses your Claude Code session). An ANTHROPIC_API_KEY / PERPLEXITY_API_KEY is optional, only if a member prefers their own provider."
   }
 }
