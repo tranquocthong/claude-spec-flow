@@ -983,6 +983,56 @@ test('checklist-gen: SD §13.2 TC table → CHECKLIST.yaml scaffold with suites 
   const yaml = fs.readFileSync(checklistPath, 'utf8');
   assert.match(yaml, /TC-001/, 'TC-001 appears in scaffold');
   assert.match(yaml, /TC-002/, 'TC-002 appears in scaffold');
+  // Default (no --auth, no stack markers in the tmp project) → detect-auth.sh
+  // resolves 'unknown' → falls back to the Summer/APISIX payload: form, not bearer.
+  assert.match(yaml, /^\s+payload:/m, 'no auth detected → keeps the payload:/X-Userinfo scaffold');
+  assert.doesNotMatch(yaml, /^\s+bearer:/m, 'no auth detected → does not emit an active bearer: token key (advisory comment mentioning it is fine)');
+});
+
+test('checklist-gen: --auth jwt-basic scaffolds a bearer token, not X-Userinfo payload', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns JWT | Must Have | US-1 |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid creds login | JWT returned 200 | FR-001 |', '',
+  ].join('\n'));
+  const r = run(['checklist-gen', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo', '--auth', 'jwt-basic'], dir);
+  assert.equal(r.ok, true, 'checklist-gen ok');
+  const yaml = fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'CHECKLIST.yaml'), 'utf8');
+  assert.match(yaml, /bearer: "\$\{JWT\}"/, 'jwt-basic → scaffolds a bearer: token, not X-Userinfo payload');
+  assert.doesNotMatch(yaml, /payload:/, 'jwt-basic → no X-Userinfo payload: form emitted');
+});
+
+test('checklist-gen: --auth summer keeps the payload: X-Userinfo scaffold with no advisory comment', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo', '',
+    '## 5.1 Functional Requirements', '',
+    '| FR ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Login returns JWT | Must Have | US-1 |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Happy path | Valid creds login | JWT returned 200 | FR-001 |', '',
+  ].join('\n'));
+  const r = run(['checklist-gen', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo', '--auth', 'summer'], dir);
+  assert.equal(r.ok, true, 'checklist-gen ok');
+  const yaml = fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'CHECKLIST.yaml'), 'utf8');
+  assert.match(yaml, /payload:/, 'summer → keeps the payload:/X-Userinfo scaffold');
+  assert.doesNotMatch(yaml, /detected auth:/, 'summer (the default assumption) gets no advisory comment');
 });
 
 test('trace-impact: --ids FR-001 resolves transitively to linked TC', () => {

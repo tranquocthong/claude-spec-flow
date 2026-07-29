@@ -114,6 +114,27 @@ const commands = {
     const httpSurface = designType === 'api' || designType === 'hybrid' || hasApiSection;
     const q = (s) => '"' + String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 
+    // Auth scaffold: Summer/APISIX projects need X-Userinfo (`payload:` token form);
+    // plain-JWT projects (Spring OAuth2 resource server, Node/Python/Go JWT libs, ...)
+    // need a real `Authorization: Bearer` token instead — a payload/X-Userinfo scaffold
+    // on those 401s every single test. Reuse detect-auth.sh (same heuristic the manual-test
+    // skill already uses for reference-doc routing) rather than re-deriving it here.
+    // --auth overrides detection; any detection failure falls back to 'unknown'.
+    let authType = String(args.auth || '').trim().toLowerCase();
+    if (!authType) {
+      try {
+        const { execFileSync } = require('child_process');
+        authType = execFileSync(
+          path.join(PLUGIN_ROOT, 'skills', 'manual-test', 'scripts', 'detect-auth.sh'),
+          [process.cwd()],
+          { encoding: 'utf8', timeout: 5000 }
+        ).trim();
+      } catch (e) {
+        authType = 'unknown';
+      }
+    }
+    const isJwtBasic = authType === 'jwt-basic';
+
     // Resolve columns by HEADER NAME, not position. sd-skeleton emits 4 cols
     // (TC ID | Flow | Test Case | Expected); sd-author commonly enriches §13.2 to
     // 6 cols (TC ID | Flow | Test Case | Input/Condition | Expected Result | FR).
@@ -159,7 +180,15 @@ const commands = {
     L.push('    port: 6379');
     L.push('tokens:');
     L.push('  user_token:');
-    L.push("    payload: '{\"iat\":1772680061,\"exp\":2088040061,\"sub\":\"${USER_ID}\"}'");
+    if (isJwtBasic) {
+      L.push('    bearer: "${JWT}"   # TODO: mint a real Bearer JWT — see references/auth-jwt-basic.md (login endpoint / IDP ROPC / static secret)');
+    } else {
+      L.push("    payload: '{\"iat\":1772680061,\"exp\":2088040061,\"sub\":\"${USER_ID}\"}'");
+      if (authType !== 'summer') {
+        L.push(`    # detected auth: ${authType} — defaulted to Summer/APISIX X-Userinfo (payload:) form.`);
+        L.push('    # If this project uses plain Authorization: Bearer, replace with: bearer: "${JWT}"');
+      }
+    }
     L.push('cleanup:');
     L.push("  all: | # TODO: DELETE test rows (LIKE 'TEST-%')");
     L.push('suites:');
