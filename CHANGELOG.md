@@ -2,6 +2,15 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.7.3] — 2026-07-30
+
+**`checklist-gen` bugfix** — unrelated to the native-task-manager cutover, found while dogfooding a plain-JWT project.
+
+- `bin/flow-tools.cjs` `checklist-gen` always scaffolded the `tokens:` block with the Summer/APISIX `payload:` form (base64 → `X-Userinfo` header), regardless of the target project's real auth model. A plain REST + JWT project (Spring OAuth2 resource server, or any Node/Python/Go/dotnet JWT setup) got a scaffold that 401s on every single test, since those apps expect `Authorization: Bearer`, not `X-Userinfo` (which is only trusted behind a real APISIX gateway upstream to begin with — see `references/auth.md`).
+- Now reuses the manual-test skill's existing `scripts/detect-auth.sh` (the same heuristic already used to route which auth reference doc to read) to classify the project; `jwt-basic` scaffolds `bearer: "${JWT}"` instead. `--auth <type>` overrides detection explicitly; anything else (`summer`, `session`, `no-auth`, `unknown`) keeps the prior `payload:`/`X-Userinfo` default, with an advisory comment pointing at the `bearer:` alternative when the detected type isn't `summer`.
+- `commands/checklist.md` documents the auto-detection and the `--auth` override.
+- 778 tests green (2 new).
+
 ## [0.7.2] — 2026-07-29
 
 Patch follow-up to 0.7.1 — no behavior change.
