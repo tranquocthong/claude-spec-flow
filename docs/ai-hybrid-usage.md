@@ -74,7 +74,7 @@ Field `context` chỉ có mặt khi op cần (ví dụ `expand`).
 Phase 1 (core emit spec):
 
 ```bash
-SPEC_FLOW_HOST_AGENT=1 npx task-master parse-prd --input SD.md --tag feat-x
+SPEC_FLOW_HOST_AGENT=1 node bin/task-master parse-prd --input SD.md --tag feat-x
 # → stdout: GenerationSpec JSON
 # → exit 0
 ```
@@ -86,7 +86,7 @@ Orchestrator (Claude Code) đọc GenerationSpec từ stdout, dùng LLM capabili
 Phase 3 (core import):
 
 ```bash
-echo '<Task[] JSON>' | npx task-master tasks-import --tag feat-x
+echo '<Task[] JSON>' | node bin/task-master tasks-import --tag feat-x
 # → stdout: {"imported":5}
 # → exit 0
 ```
@@ -102,7 +102,7 @@ const result = importTasks('feat-x', taskArray);
 #### expand — Sinh subtasks cho task cha
 
 ```bash
-SPEC_FLOW_HOST_AGENT=1 npx task-master expand --id 3 --tag feat-x
+SPEC_FLOW_HOST_AGENT=1 node bin/task-master expand --id 3 --tag feat-x
 # → stdout: GenerationSpec với operation="expand", context.parentTaskId="3", context.existingSubtaskIds=[...]
 ```
 
@@ -111,14 +111,14 @@ GenerationSpec cho expand sẽ có `context.existingSubtaskIds` để orchestrat
 #### analyze-complexity — Phân tích độ phức tạp
 
 ```bash
-SPEC_FLOW_HOST_AGENT=1 npx task-master analyze-complexity --tag feat-x
+SPEC_FLOW_HOST_AGENT=1 node bin/task-master analyze-complexity --tag feat-x
 # → stdout: GenerationSpec với instructions hướng dẫn sinh complexity report
 ```
 
 #### research — Nghiên cứu query
 
 ```bash
-SPEC_FLOW_HOST_AGENT=1 npx task-master research "How to implement zero-knowledge proofs?" --tag feat-x
+SPEC_FLOW_HOST_AGENT=1 node bin/task-master research "How to implement zero-knowledge proofs?" --tag feat-x
 # → stdout: GenerationSpec với operation="research"
 ```
 
@@ -307,7 +307,7 @@ Optional fields (`details`, `testStrategy`) are preserved through import if pres
     SPEC_FLOW_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   run: |
     # config.json đã có headlessFallback với apiKey từ env
-    npx task-master parse-prd --input SD.md --tag feat-x
+    node bin/task-master parse-prd --input SD.md --tag feat-x
 ```
 
 ```json

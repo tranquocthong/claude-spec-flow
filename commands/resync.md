@@ -74,7 +74,7 @@ Run `/sf:phase <feature>` to re-implement the `review` tasks → manual-test →
 
 ## Pipeline recap
 ```
-srs-diff → trace-impact → SD delta via sd-author → CLI `task-master update --from` cascade
+srs-diff → trace-impact → SD delta via sd-author → CLI `node bin/task-master update --from` cascade
   → re-open impacted done tasks → regenerate impacted checklist
   → srs-snapshot (new baseline) → trace-build → state-update
 ```
