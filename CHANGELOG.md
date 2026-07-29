@@ -2,6 +2,16 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.7.0] — 2026-07-29
+
+**native-task-manager cutover — official release.** The native engine shipped dark-launch in 0.6.0 (opt-in, default `legacy`); this release makes it the sole, unconditional default and removes the third-party dependency it replaces. Skipped the planned C-6 real-feature soak — this is a direct-to-native cutover.
+
+- **Default flipped to native**: `.mcp.json` and the `parse-prd`/`analyze-complexity`/`update`/`use-tag` invocations in `commands/{ingest,init,phase,resync}.md` now point at the bundled `bin/mcp-server.js` / `bin/task-master` (`node`, not `npx`). `engine-selector.cjs` / `engine-router.cjs` now default to `'native'` when `taskCore.engine` is absent or unset (previously defaulted to `'legacy'`); an unrecognised `taskCore.engine` value also now falls back to `'native'` (never legacy, a removed dependency).
+- **`task-master-ai@0.43.1` removed**: dropped the pin from `DEPENDENCIES.md`; no `.mcp.json` or CLI invocation fetches it anymore. `lib/maintenance.cjs`'s `/sf:doctor` `dep-lock` check now verifies the native binding instead of a task-master-ai version pin.
+- **Rollback kept as an escape hatch** (not removed): `taskCore.engine: "legacy"` is still a supported explicit value — `engine-router.cjs` returns the `ERR_LEGACY_MODE` fail-open envelope for it — and `scripts/rollback.cjs` / `scripts/cutover.cjs` still work for emergency recovery. Since the soak (C-6) never ran, this is deliberate insurance.
+- Docs updated (`README.md`, `DEPENDENCIES.md`, `agents/hybrid-executor.md`, `skills/srs-to-sd/SKILL.md`) to drop "auto-fetched via npx" framing in favor of "bundled, zero-network".
+- Verified: 776 unit tests green (updated default-engine assertions across `engine-selector`, `engine-router`, `engine-bootstrap`, `remove-legacy-dep`, `integration-contract` test suites), `equivalence-verify` (C-2) and `doctor-contract` (C-4) gates both pass.
+
 ## [0.6.0] — 2026-07-28
 
 **native-task-manager** — a self-built, zero-dependency drop-in replacement for the third-party `task-master-ai@0.43.1` task engine. Shipped **dark-launch**: `taskCore.engine` defaults to `legacy`, so nothing changes until a project opts in with `taskCore.engine: "native"`. Removing the old package (`DEPENDENCIES.md` pin + `.mcp.json` entry) is deferred until the native engine has soaked through real features — the rollback safety net stays.
