@@ -247,16 +247,16 @@ test('(i) module exports only the three documented functions', () => {
 });
 
 // ---------------------------------------------------------------------------
-// activeBinding with missing config → falls back to legacy (engine-selector behaviour)
+// activeBinding with missing config → defaults to native (engine-selector behaviour)
 // ---------------------------------------------------------------------------
 
-test('activeBinding with missing config file returns legacy binding', () => {
+test('activeBinding with missing config file returns native binding', () => {
   const tmpDir = makeTmpDir();
-  // Do NOT create a config file — simulates ENOENT → engine-selector returns legacy
+  // Do NOT create a config file — simulates ENOENT → engine-selector returns native
   const _configFile = path.join(tmpDir, '.spec-flow', 'config.json');
 
   const binding = engineBootstrap.activeBinding({ _configFile });
 
-  assert.equal(binding.engine, 'legacy',
-    'activeBinding must fall back to legacy when config file is missing');
+  assert.equal(binding.engine, 'native',
+    'activeBinding must default to native when config file is missing');
 });

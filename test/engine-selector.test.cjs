@@ -2,11 +2,11 @@
  * Unit tests for lib/engine-selector.cjs — canonical config-level engine reader.
  *
  * Covers:
- *   TC-001  missing config file → 'legacy' (dark-launch default, FR-002)
- *   TC-001  taskCore absent from config → 'legacy'
- *   TC-001  taskCore.engine = null / '' / 'legacy' → 'legacy'
+ *   TC-001  missing config file → 'native' (shipped default, FR-002)
+ *   TC-001  taskCore absent from config → 'native'
+ *   TC-001  taskCore.engine = null / '' → 'native'; explicit 'legacy' → 'legacy'
  *   TC-002  taskCore.engine = 'native' → 'native' (FR-002)
- *   TC-003  unknown engine value → 'legacy' + stderr warning (FR-003)
+ *   TC-003  unknown engine value → 'native' + stderr warning (FR-003)
  *   Extra   parse error (malformed JSON) → rethrows (not ENOENT)
  *   Extra   read-once-per-call (no caching) — two calls with different injected files
  *           return independently resolved values (D3)
@@ -91,55 +91,55 @@ function captureStderr(fn) {
 }
 
 // ---------------------------------------------------------------------------
-// TC-001 — Missing config file → 'legacy' (dark-launch default, FR-002)
+// TC-001 — Missing config file → 'native' (shipped default, FR-002)
 // ---------------------------------------------------------------------------
 
-test('TC-001: missing config file returns legacy', () => {
+test('TC-001: missing config file returns native', () => {
   const tmpDir = makeTmpDir();
   // Do NOT create any config file — simulate ENOENT
   const _configFile = path.join(tmpDir, '.spec-flow', 'config.json');
 
   const result = engineSelector.readEngineConfig({ _configFile });
 
-  assert.equal(result, 'legacy',
-    'readEngineConfig must return legacy when config file is missing');
+  assert.equal(result, 'native',
+    'readEngineConfig must return native when config file is missing');
 });
 
 // ---------------------------------------------------------------------------
-// TC-001 — taskCore key absent from config → 'legacy'
+// TC-001 — taskCore key absent from config → 'native'
 // ---------------------------------------------------------------------------
 
-test('TC-001: taskCore absent in config returns legacy', () => {
+test('TC-001: taskCore absent in config returns native', () => {
   const tmpDir = makeTmpDir();
   // engineValue=undefined → writes config WITHOUT taskCore key
   const _configFile = makeConfigFile(tmpDir, undefined);
 
   const result = engineSelector.readEngineConfig({ _configFile });
 
-  assert.equal(result, 'legacy',
-    'readEngineConfig must return legacy when taskCore is absent');
+  assert.equal(result, 'native',
+    'readEngineConfig must return native when taskCore is absent');
 });
 
 // ---------------------------------------------------------------------------
-// TC-001 — taskCore exists but engine field is absent → 'legacy'
+// TC-001 — taskCore exists but engine field is absent → 'native'
 // ---------------------------------------------------------------------------
 
-test('TC-001: taskCore.engine absent (empty taskCore object) returns legacy', () => {
+test('TC-001: taskCore.engine absent (empty taskCore object) returns native', () => {
   const tmpDir = makeTmpDir();
   // engineValue=null → writes config with taskCore:{} (no engine field)
   const _configFile = makeConfigFile(tmpDir, null);
 
   const result = engineSelector.readEngineConfig({ _configFile });
 
-  assert.equal(result, 'legacy',
-    'readEngineConfig must return legacy when taskCore.engine field is missing');
+  assert.equal(result, 'native',
+    'readEngineConfig must return native when taskCore.engine field is missing');
 });
 
 // ---------------------------------------------------------------------------
 // TC-001 — taskCore.engine = null → 'legacy'
 // ---------------------------------------------------------------------------
 
-test('TC-001: taskCore.engine = null returns legacy', () => {
+test('TC-001: taskCore.engine = null returns native', () => {
   const tmpDir = makeTmpDir();
   const configDir = path.join(tmpDir, '.spec-flow');
   fs.mkdirSync(configDir, { recursive: true });
@@ -148,23 +148,23 @@ test('TC-001: taskCore.engine = null returns legacy', () => {
 
   const result = engineSelector.readEngineConfig({ _configFile });
 
-  assert.equal(result, 'legacy',
-    'readEngineConfig must return legacy when taskCore.engine is null');
+  assert.equal(result, 'native',
+    'readEngineConfig must return native when taskCore.engine is null');
 });
 
 // ---------------------------------------------------------------------------
-// TC-001 — taskCore.engine = '' → 'legacy'
+// TC-001 — taskCore.engine = '' → 'native'
 // ---------------------------------------------------------------------------
 
-test('TC-001: taskCore.engine empty string returns legacy', () => {
+test('TC-001: taskCore.engine empty string returns native', () => {
   const tmpDir = makeTmpDir();
   // engineValue='' → writes config with taskCore:{engine:''}
   const _configFile = makeConfigFile(tmpDir, '');
 
   const result = engineSelector.readEngineConfig({ _configFile });
 
-  assert.equal(result, 'legacy',
-    'readEngineConfig must return legacy when taskCore.engine is empty string');
+  assert.equal(result, 'native',
+    'readEngineConfig must return native when taskCore.engine is empty string');
 });
 
 // ---------------------------------------------------------------------------
@@ -196,11 +196,11 @@ test('TC-002: taskCore.engine = native returns native', () => {
 });
 
 // ---------------------------------------------------------------------------
-// TC-003 — Unknown engine value → 'legacy' + stderr warning (FR-003)
-// No silent implicit native — unknown values must not accidentally enable native.
+// TC-003 — Unknown engine value → 'native' + stderr warning (FR-003)
+// No silent implicit legacy (a removed dependency) for an unrecognised value.
 // ---------------------------------------------------------------------------
 
-test('TC-003: unknown engine value returns legacy and writes stderr warning', () => {
+test('TC-003: unknown engine value returns native and writes stderr warning', () => {
   const tmpDir = makeTmpDir();
   const _configFile = makeConfigFile(tmpDir, 'foo');
 
@@ -209,15 +209,15 @@ test('TC-003: unknown engine value returns legacy and writes stderr warning', ()
     result = engineSelector.readEngineConfig({ _configFile });
   });
 
-  assert.equal(result, 'legacy',
-    'readEngineConfig must return legacy for unknown engine value');
+  assert.equal(result, 'native',
+    'readEngineConfig must return native for unknown engine value');
   assert.ok(stderrOutput.length > 0,
     'a warning must be written to stderr for unknown engine values');
   assert.ok(stderrOutput.includes('foo'),
     `stderr warning must include the unknown value 'foo'; got: ${stderrOutput}`);
 });
 
-test('TC-003: another unknown value (bar) also returns legacy with stderr warning', () => {
+test('TC-003: another unknown value (bar) also returns native with stderr warning', () => {
   const tmpDir = makeTmpDir();
   const _configFile = makeConfigFile(tmpDir, 'bar');
 
@@ -226,8 +226,8 @@ test('TC-003: another unknown value (bar) also returns legacy with stderr warnin
     result = engineSelector.readEngineConfig({ _configFile });
   });
 
-  assert.equal(result, 'legacy',
-    'readEngineConfig must return legacy for any unknown engine value');
+  assert.equal(result, 'native',
+    'readEngineConfig must return native for any unknown engine value');
   assert.ok(stderrOutput.includes('bar'),
     `stderr warning must include the value 'bar'; got: ${stderrOutput}`);
 });
@@ -252,10 +252,10 @@ test('Extra: malformed JSON config rethrows SyntaxError', () => {
 
 // ---------------------------------------------------------------------------
 // Extra — default config path: no _inject → uses .spec-flow/config.json
-// (when cwd has no .spec-flow/config.json, must return legacy, not throw)
+// (when cwd has no .spec-flow/config.json, must return native, not throw)
 // ---------------------------------------------------------------------------
 
-test('Extra: no inject uses default path, returns legacy when file missing', () => {
+test('Extra: no inject uses default path, returns native when file missing', () => {
   // We cannot control cwd between calls, so just verify no throw and legacy returned.
   // The real .spec-flow/config.json may or may not exist; either way must not throw.
   let result;

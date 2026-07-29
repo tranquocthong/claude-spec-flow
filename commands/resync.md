@@ -43,7 +43,7 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
 
 5. **Cascade tasks** (AI op → CLI, not MCP — MCP fails on a stale-cached provider)
    ```
-   npx -y -p task-master-ai@0.43.1 task-master update --from=<lowest impacted task id> \
+   node bin/task-master update --from=<lowest impacted task id> \
      --prompt="<changeset summary>"
    ```
    Only if the CLI genuinely errors on a missing provider/key do you ask the user to run it in their terminal.

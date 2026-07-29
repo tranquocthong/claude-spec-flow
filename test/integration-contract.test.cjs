@@ -654,10 +654,11 @@ test('TC-016 CLI update-task --id 999 (not found): stderr contains ERR_TASK_NOT_
 
 // ---------------------------------------------------------------------------
 // TC-017 — Engine routing legacy isolation: engine=legacy → ERR_LEGACY_MODE,
-//           native core NOT invoked (FR-016, FR-017)
+//           native core NOT invoked (FR-016, FR-017, rollback escape hatch)
 //
 // Asserts via routeToEngine with explicit engine=legacy config. The error
 // envelope ERR_LEGACY_MODE is returned immediately — no native file I/O occurs.
+// A missing config (or absent taskCore.engine) now defaults to native instead.
 // ---------------------------------------------------------------------------
 
 test('TC-017 engine=legacy → routeToEngine returns ERR_LEGACY_MODE, native core not invoked', async () => {
@@ -673,15 +674,15 @@ test('TC-017 engine=legacy → routeToEngine returns ERR_LEGACY_MODE, native cor
   assert.ok(result.error, 'engine=legacy must return an error envelope');
   assert.equal(result.error.code, 'ERR_LEGACY_MODE', 'error.code must be ERR_LEGACY_MODE');
 
-  // Also verify: missing config (no taskCore.engine field) → same legacy behavior
-  const _configFile2 = makeConfigFile(tmpDir + '-nokey', null);
+  // Also verify: missing taskCore.engine field → dispatches to native (shipped default)
   const tmpDir2 = tmpDir + '-nokey';
   fs.mkdirSync(tmpDir2, { recursive: true });
+  const _configFile2 = makeConfigFile(tmpDir2, null);
   const _paths2 = makePaths(tmpDir2);
   const result2 = await routeToEngine('get_tasks', { tag: 'main', _paths: _paths2, _configFile: _configFile2 });
 
-  assert.ok(result2.error, 'missing taskCore.engine must also return error envelope');
-  assert.equal(result2.error.code, 'ERR_LEGACY_MODE', 'missing taskCore.engine must produce ERR_LEGACY_MODE');
+  assert.ok(!result2.error, `missing taskCore.engine must dispatch to native, not error; got: ${JSON.stringify(result2.error)}`);
+  assert.ok(Array.isArray(result2.tasks), 'result2.tasks must be an array (native dispatch)');
 });
 
 // ---------------------------------------------------------------------------

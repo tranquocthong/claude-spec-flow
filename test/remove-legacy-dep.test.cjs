@@ -160,27 +160,20 @@ test('(a) guard refuses when engine is legacy — writes nothing, refused:true',
 });
 
 // ---------------------------------------------------------------------------
-// (b) Guard refuses when engine config file is absent (defaults to legacy)
+// (b) Guard does NOT refuse when engine config file is absent (defaults to native)
 // ---------------------------------------------------------------------------
 
-test('(b) guard refuses when engine config file is absent — refused:true', async () => {
+test('(b) guard proceeds when engine config file is absent — defaults to native', async () => {
   const tmpDir = makeTmpDir();
-  // Non-existent config file → readEngineConfig returns 'legacy'
+  // Non-existent config file → readEngineConfig now returns 'native' (shipped default)
   const engineConfigFile = path.join(tmpDir, 'nonexistent-config.json');
-  const dependenciesFile = makeTmpDepsFile(tmpDir);
+  const dependenciesFile = makeTmpDepsFile(tmpDir, true); // includes pin line
   const mcpFile = makeTmpLegacyMcp(tmpDir);
-
-  const depsBefore = fs.readFileSync(dependenciesFile, 'utf8');
-  const mcpBefore = fs.readFileSync(mcpFile, 'utf8');
 
   const result = await removeLegacyDep({ dependenciesFile, mcpFile, engineConfigFile });
 
-  assert.equal(result.refused, true, 'result.refused must be true when engine config is absent');
-  assert.ok(result.reason, 'result.reason must be set when refused');
-
-  // Files must be untouched
-  assert.equal(fs.readFileSync(dependenciesFile, 'utf8'), depsBefore, 'DEPENDENCIES.md must not change when refused');
-  assert.equal(fs.readFileSync(mcpFile, 'utf8'), mcpBefore, '.mcp.json must not change when refused');
+  assert.equal(result.refused, undefined, 'result must not be refused when engine config is absent (defaults to native)');
+  assert.ok(result.depLinesRemoved >= 1, 'the task-master-ai pin line must be removed');
 });
 
 // ---------------------------------------------------------------------------

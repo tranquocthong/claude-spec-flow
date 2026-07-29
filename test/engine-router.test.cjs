@@ -2,11 +2,12 @@
  * Unit tests for lib/engine-router.cjs — config-driven engine dispatch.
  *
  * Covers FR-016 (read config once per invocation), FR-017 (fail-open / legacy
- * mode), FR-018 (native CRUD routing), FR-019 (invocation context logging).
+ * mode as rollback escape hatch), FR-018 (native CRUD routing), FR-019
+ * (invocation context logging).
  *
  * Test strategy cases (from task spec):
- *   (a) config missing → ERR_LEGACY_MODE
- *   (b) engine=legacy → ERR_LEGACY_MODE for all ops
+ *   (a) config missing → dispatches to native (shipped default)
+ *   (b) engine=legacy → ERR_LEGACY_MODE for all ops (explicit rollback only)
  *   (c) engine=native + CRUD op → calls native fn and propagates result
  *   (d) engine=native + AI op with ai-hybrid missing → ERR_AI_HOST_REQUIRED
  *   (e) native error (ERR_TASK_NOT_FOUND) wrapped as {error:{code,message}}
@@ -86,12 +87,12 @@ function seedTask(tasksFile, tag, task) {
 }
 
 // ---------------------------------------------------------------------------
-// (a) config missing → ERR_LEGACY_MODE (FR-017)
-// When .spec-flow/config.json does not exist, the router must fall back to
-// legacy mode and return { error: { code: 'ERR_LEGACY_MODE', ... } }.
+// (a) config missing → dispatches to native (FR-017, shipped default)
+// When .spec-flow/config.json does not exist, the router must dispatch to
+// the native engine rather than fail-open to legacy (a removed dependency).
 // ---------------------------------------------------------------------------
 
-test('(a) config missing: routeToEngine returns ERR_LEGACY_MODE', async () => {
+test('(a) config missing: routeToEngine dispatches to native', async () => {
   const tmpDir = makeTmpDir();
   const _paths = makePaths(tmpDir);
   // Do NOT create any config file — simulate missing .spec-flow/config.json
@@ -99,18 +100,15 @@ test('(a) config missing: routeToEngine returns ERR_LEGACY_MODE', async () => {
 
   const result = await engineRouter.routeToEngine('get_tasks', { tag: 'main', _paths, _configFile });
 
-  assert.ok(result && result.error, 'result must have an error field');
-  assert.equal(result.error.code, 'ERR_LEGACY_MODE',
-    'error.code must be ERR_LEGACY_MODE when config is missing');
-  assert.ok(typeof result.error.message === 'string',
-    'error.message must be a string');
+  assert.ok(!result.error, `must not have error when config is missing; got: ${JSON.stringify(result.error)}`);
+  assert.ok(Array.isArray(result.tasks), 'result.tasks must be an array (native dispatch)');
 });
 
 // ---------------------------------------------------------------------------
-// (a2) config present but taskCore.engine absent → ERR_LEGACY_MODE (FR-017)
+// (a2) config present but taskCore.engine absent → dispatches to native (FR-017)
 // ---------------------------------------------------------------------------
 
-test('(a2) taskCore.engine absent in config: routeToEngine returns ERR_LEGACY_MODE', async () => {
+test('(a2) taskCore.engine absent in config: routeToEngine dispatches to native', async () => {
   const tmpDir = makeTmpDir();
   const _paths = makePaths(tmpDir);
   // engine=null means taskCore key is absent
@@ -118,9 +116,8 @@ test('(a2) taskCore.engine absent in config: routeToEngine returns ERR_LEGACY_MO
 
   const result = await engineRouter.routeToEngine('get_tasks', { tag: 'main', _paths, _configFile });
 
-  assert.ok(result && result.error, 'result must have an error field');
-  assert.equal(result.error.code, 'ERR_LEGACY_MODE',
-    'error.code must be ERR_LEGACY_MODE when taskCore.engine is absent');
+  assert.ok(!result.error, `must not have error when taskCore.engine is absent; got: ${JSON.stringify(result.error)}`);
+  assert.ok(Array.isArray(result.tasks), 'result.tasks must be an array (native dispatch)');
 });
 
 // ---------------------------------------------------------------------------
@@ -525,33 +522,27 @@ test('(f) invocation log goes to stderr, NOT stdout (agent-native D7 stdout stay
   assert.ok(stderrChunks.join('').includes('[engine-router]'), 'the invocation log must be written to stderr');
 });
 
-test('(f) config-missing warning is logged (operation=get_task, no config file)', async () => {
+test('(f) unknown engine value: warning is logged and op still dispatches to native', async () => {
   const tmpDir = makeTmpDir();
   const _paths = makePaths(tmpDir);
-  // No config file created — deliberate
-  const _configFile = path.join(tmpDir, '.spec-flow', 'config.json');
+  const _configFile = makeConfigFile(tmpDir, 'foo');
 
   const loggedMessages = [];
   const origWarn = console.warn;
-  const origLog = console.log;
   console.warn = (...args) => loggedMessages.push(args.join(' '));
-  console.log = (...args) => loggedMessages.push(args.join(' '));
 
+  let result;
   try {
-    await engineRouter.routeToEngine('get_task', {
-      id: '1',
+    result = await engineRouter.routeToEngine('get_tasks', {
       tag: 'main',
       _paths,
       _configFile,
     });
   } finally {
     console.warn = origWarn;
-    console.log = origLog;
   }
 
   const allLogged = loggedMessages.join('\n');
-  assert.ok(
-    allLogged.toLowerCase().includes('legacy') || allLogged.includes('taskCore.engine'),
-    `warning log must mention "legacy" or "taskCore.engine"; got: ${allLogged}`
-  );
+  assert.ok(allLogged.includes('foo'), `warning log must mention the unknown value 'foo'; got: ${allLogged}`);
+  assert.ok(!result.error, `unknown engine value must still dispatch to native; got error: ${JSON.stringify(result.error)}`);
 });
