@@ -30,5 +30,4 @@ Routes to the right command and enforces the gates.
 4. **SD is the source of truth** — change SD first, then let trace + `update --from` propagate. Never patch code without patching the SD.
 
 ## Dependencies
-- **Bundled**: manual-test skill (`skills/manual-test/scripts/*`) and `bin/flow-tools.cjs`.
-- **Auto-fetched at runtime**: Task Master MCP via `npx -y task-master-ai` (`.mcp.json`) — needs node + first-run network; uses the keyless `claude-code` provider by default (no API key).
+- **Bundled, zero-network**: manual-test skill (`skills/manual-test/scripts/*`), `bin/flow-tools.cjs`, and the native task engine MCP server (`bin/mcp-server.js`, wired via `.mcp.json`) — no external package fetch, uses the keyless `claude-code` provider by default (no API key).

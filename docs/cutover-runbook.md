@@ -1,5 +1,7 @@
 # Native Task Manager — Cutover Runbook
 
+**Cập nhật 0.7.0 (2026-07-29):** Cutover đã được thực hiện chính thức — native là engine mặc định duy nhất, `task-master-ai@0.43.1` đã bị xóa khỏi `DEPENDENCIES.md`. C-6 (soak trên feature thực) bị bỏ qua có chủ đích — quyết định của maintainer, không phải theo quy trình khuyến nghị bên dưới. C-7 đã chạy. Rollback (§9.3, `scripts/rollback.cjs`) vẫn được giữ làm escape hatch dù chưa có dữ liệu soak thực tế.
+
 Tài liệu này là runbook tổng hợp cho operator để thực hiện cutover từ `task-master-ai@0.43.1` sang native task engine trong spec-flow. Bao gồm các bước C-1 đến C-7, quy trình rollback §9.3, và các gate kiểm tra bắt buộc.
 
 **Ngôn tắc:** Code, CLI, config và tên file luôn bằng tiếng Anh. Văn xuôi hướng dẫn có thể bằng tiếng Việt.

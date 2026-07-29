@@ -26,7 +26,7 @@ SRS / idea  →  SD  →  (adaptive) implement  →  manual-test verify  →  sh
 /plugin marketplace add tranquocthong/claude-spec-flow
 /plugin install sf@claude-spec-flow
 ```
-Reload Claude Code, then verify: **`/sf:doctor`**. Prereqs: node ≥ 18 + npm; python3 + PyYAML (`pip3 install pyyaml`) for the manual-test checklist runner. **No API key** — `/sf:init` sets Task Master to the keyless `claude-code` provider (auto-fetched via `npx`).
+Reload Claude Code, then verify: **`/sf:doctor`**. Prereqs: node ≥ 18; python3 + PyYAML (`pip3 install pyyaml`) for the manual-test checklist runner. **No API key, no network fetch** — the task engine is bundled (native, zero-dependency); `/sf:init` sets it to the keyless `claude-code` provider.
 
 <details><summary>Team install · zero-install engine</summary>
 
@@ -426,7 +426,7 @@ lib/subtask-manager.cjs  SubtaskManager — hierarchical id derivation, computeC
 lib/expand-hook.cjs      ExpandHook — validate + delegate structured subtask lists to SubtaskManager (sub 2/5)
 templates/        sd-template.md · srs-template.md · lang/{en,vi}.json (SRS-parse keyword packs)
 test/             *.test.cjs — flow-tools (CLI) · core · maintenance unit suites (`node --test test/*.test.cjs`)
-.mcp.json         wires Task Master via npx
+.mcp.json         wires the native task engine MCP server (bin/mcp-server.js, zero-network)
 ```
 
 **Created in the target project**
@@ -444,15 +444,14 @@ test/             *.test.cjs — flow-tools (CLI) · core · maintenance unit su
 
 <details><summary><b>Dependencies</b> (locked)</summary>
 
-All dependencies are pinned — updates are deliberate and tested, never automatic.
+All dependencies are pinned — updates are deliberate and tested, never automatic. The task engine (`bin/mcp-server.js`, `bin/task-master`) is a self-built, zero-network, zero-external-dependency core — no `task-master-ai` package is fetched or installed.
 
 | Dependency | How | Pinned version |
 | --- | --- | --- |
-| `task-master-ai` | Runtime MCP via `npx` (`.mcp.json`) | `0.43.1` |
 | `manual-test` | Bundled (vendored in `skills/manual-test/`) | this plugin's version |
 | `node` | Environment prereq | >= 18 |
 
-**Bump policy:** update the pin in `.mcp.json`, re-run `/sf:doctor` (`dep-lock` check), smoke test, then commit. See [DEPENDENCIES.md](DEPENDENCIES.md) for rationale.
+See [DEPENDENCIES.md](DEPENDENCIES.md) for the full lock policy.
 </details>
 
 ## Status & known limits
