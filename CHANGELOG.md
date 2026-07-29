@@ -2,6 +2,13 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.7.1] — 2026-07-29
+
+Follow-up cleanup for the 0.7.0 native cutover — no behavior change, docs/metadata only.
+
+- **`.claude-plugin/marketplace.json`**: `_notes` still described the task engine as "auto-fetched via `npx -y task-master-ai`" — the text shown in plugin info/marketplace listings. Updated to describe the bundled, zero-network native engine.
+- **Bare `task-master` mentions fixed**: `commands/change.md`, `commands/resync.md`, `commands/phase.md`, and `docs/ai-hybrid-usage.md` had a few inline mentions of `task-master <subcommand>` / `npx task-master <subcommand>` without the `node bin/` prefix. `scripts/cutover.cjs`'s regex only rewrote the exact `npx -y -p task-master-ai@0.43.1 task-master ...` invocation form; these were prose mentions in a different shape that slipped through. Confirmed via a live incident: a bare `task-master` on `$PATH` resolves to whatever global npm/homebrew install exists on the machine (a real, separate `task-master-ai` install) — not this plugin's own `bin/task-master` — so an agent following the un-prefixed doc text could silently call the wrong, unrelated binary.
+
 ## [0.7.0] — 2026-07-29
 
 **native-task-manager cutover — official release.** The native engine shipped dark-launch in 0.6.0 (opt-in, default `legacy`); this release makes it the sole, unconditional default and removes the third-party dependency it replaces. Skipped the planned C-6 real-feature soak — this is a direct-to-native cutover.
