@@ -2,6 +2,12 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.7.2] — 2026-07-29
+
+Patch follow-up to 0.7.1 — no behavior change.
+
+- **`/sf:doctor` drops the stale `npx-available` check** (`lib/maintenance.cjs`): native is zero-network and never shells out to `npx`; the check was a leftover from the pre-cutover era. Also removes the now-unused `execSync`/`child_process` require in `doctor()`.
+
 ## [0.7.1] — 2026-07-29
 
 Follow-up cleanup for the 0.7.0 native cutover — no behavior change, docs/metadata only.
