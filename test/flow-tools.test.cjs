@@ -984,9 +984,11 @@ test('checklist-gen: SD §13.2 TC table → CHECKLIST.yaml scaffold with suites 
   assert.match(yaml, /TC-001/, 'TC-001 appears in scaffold');
   assert.match(yaml, /TC-002/, 'TC-002 appears in scaffold');
   // Default (no --auth, no stack markers in the tmp project) → detect-auth.sh
-  // resolves 'unknown' → falls back to the Summer/APISIX payload: form, not bearer.
-  assert.match(yaml, /^\s+payload:/m, 'no auth detected → keeps the payload:/X-Userinfo scaffold');
-  assert.doesNotMatch(yaml, /^\s+bearer:/m, 'no auth detected → does not emit an active bearer: token key (advisory comment mentioning it is fine)');
+  // resolves 'unknown'. X-Userinfo is Summer/APISIX-specific, so an unclassified
+  // project must NOT get it — it 401s every test. Bearer is the safe wire default.
+  assert.match(yaml, /^\s+bearer:/m, 'unknown auth → scaffolds the standard Authorization: Bearer form');
+  assert.doesNotMatch(yaml, /^\s+payload:/m, 'unknown auth → does not emit an active Summer/APISIX payload: token key');
+  assert.match(yaml, /detected auth: unknown/, 'unknown auth → advisory comment names the detection result');
 });
 
 test('checklist-gen: --auth jwt-basic scaffolds a bearer token, not X-Userinfo payload', () => {
@@ -1008,8 +1010,9 @@ test('checklist-gen: --auth jwt-basic scaffolds a bearer token, not X-Userinfo p
   const r = run(['checklist-gen', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo', '--auth', 'jwt-basic'], dir);
   assert.equal(r.ok, true, 'checklist-gen ok');
   const yaml = fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'CHECKLIST.yaml'), 'utf8');
-  assert.match(yaml, /bearer: "\$\{JWT\}"/, 'jwt-basic → scaffolds a bearer: token, not X-Userinfo payload');
+  assert.match(yaml, /bearer: "\$\{TOKEN\}"/, 'jwt-basic → scaffolds a bearer: token, not X-Userinfo payload');
   assert.doesNotMatch(yaml, /payload:/, 'jwt-basic → no X-Userinfo payload: form emitted');
+  assert.doesNotMatch(yaml, /detected auth:/, 'jwt-basic is an unambiguous detection → no advisory comment');
 });
 
 test('checklist-gen: --auth summer keeps the payload: X-Userinfo scaffold with no advisory comment', () => {

@@ -12,7 +12,42 @@ cd "$ROOT" 2>/dev/null || { echo "Project root not found: $ROOT" >&2; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 STACK=$("$HERE/detect-stack.sh" "$ROOT" 2>/dev/null)
 
+# Cross-stack fallback: a hand-rolled `Authorization: Bearer <token>` scheme has
+# NO library fingerprint (no jsonwebtoken / jjwt / pyjwt dep), so every per-stack
+# dependency check above misses it — a Node/Express service validating a static
+# `Bearer <api_key>` looked exactly like "no auth" and got the Summer/APISIX
+# X-Userinfo scaffold, which 401s every generated test.
+# What the checklist actually needs is the WIRE contract, not the token format:
+# code that reads the Authorization header AND strips a "Bearer " prefix means
+# `Authorization: Bearer <token>` — same as `jwt-basic`, whether the token is a
+# real JWT or an opaque API key (how to OBTAIN it stays a TODO either way).
+SRC_INCLUDES=(--include='*.js' --include='*.mjs' --include='*.cjs' --include='*.ts'
+              --include='*.py' --include='*.go' --include='*.java' --include='*.kt'
+              --include='*.cs' --include='*.rb' --include='*.php')
+SRC_EXCLUDES=(--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist
+              --exclude-dir=build --exclude-dir=target --exclude-dir=vendor
+              --exclude-dir=.venv --exclude-dir=venv)
+
+try_custom_bearer() {
+  grep -rqiE "(headers?\[['\"]authorization|headers\.authorization|\.get\(['\"]authorization|getHeader\(['\"]Authorization|HTTP_AUTHORIZATION|Header\.Get\(['\"]Authorization)" \
+    "${SRC_INCLUDES[@]}" "${SRC_EXCLUDES[@]}" . 2>/dev/null || return 1
+  grep -rqE "['\"]Bearer[ '\"]" "${SRC_INCLUDES[@]}" "${SRC_EXCLUDES[@]}" . 2>/dev/null || return 1
+
+  echo "jwt-basic"
+  {
+    echo "Detected: custom Authorization: Bearer scheme (no JWT/session library on $STACK)."
+    echo "The token may be an opaque API key or a static secret, not a signed JWT —"
+    echo "the wire form is the same, only how you MINT it differs."
+    echo "→ Use references/auth-jwt-basic.md; checklist token form: bearer: \"\${TOKEN}\""
+    echo
+    echo "Agent: find where the header is validated →"
+    echo "  grep -rniE \"authorization|bearer\" --include='*.js' --include='*.ts' --include='*.py' --include='*.go' . | head -10"
+  } >&2
+  return 0
+}
+
 emit_unknown() {
+  try_custom_bearer && return 0
   echo "unknown"
   {
     echo "Stack=$STACK — auth model not classified."
@@ -69,8 +104,11 @@ case "$STACK" in
       exit 0
     fi
 
+    # No security dep ≠ no auth: a plain servlet Filter / HandlerInterceptor can
+    # read Authorization: Bearer itself. Check the source before declaring no-auth.
+    try_custom_bearer && exit 0
     echo "no-auth"
-    echo "Detected: No Spring Security / JWT deps." >&2
+    echo "Detected: No Spring Security / JWT deps, and no custom Authorization: Bearer handling in source." >&2
     exit 0
     ;;
 

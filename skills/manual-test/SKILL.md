@@ -134,9 +134,16 @@ scripts/detect-auth.sh
 | Detect result | Path | Reference |
 |---------------|------|-----------|
 | `summer` | Path A or B (decide via quick-probe below) | `references/auth.md` |
-| `jwt-basic` | **Path C** — standard `Authorization: Bearer <jwt>` | `references/auth-jwt-basic.md` |
+| `jwt-basic` | **Path C** — standard `Authorization: Bearer <token>` | `references/auth-jwt-basic.md` |
 | `no-auth` | No auth needed | — |
 | `unknown` | Inspect SecurityFilterChain manually | — |
+
+`jwt-basic` also covers **custom Bearer schemes with no JWT library** — a service that
+reads the `Authorization` header itself and validates an opaque API key / static secret.
+Library fingerprints miss those, so the detector falls back to grepping the source for
+header-read + `Bearer ` prefix. The wire form is identical (`Authorization: Bearer <token>`);
+only how you MINT the token differs, and that is a lookup either way. `X-Userinfo` is
+**Summer/APISIX-only** — never scaffold it for a project that did not detect as `summer`.
 
 ### Summer projects — quick-probe Path A vs B
 
