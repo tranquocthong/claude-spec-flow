@@ -43,7 +43,7 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
 
 5. **Cascade tasks** (AI op → CLI, not MCP — MCP fails on a stale-cached provider)
    ```
-   node bin/task-master update --from=<lowest impacted task id> \
+   node ${CLAUDE_PLUGIN_ROOT}/bin/task-master update --from=<lowest impacted task id> \
      --prompt="<changeset summary>"
    ```
    Only if the CLI genuinely errors on a missing provider/key do you ask the user to run it in their terminal.
@@ -74,7 +74,7 @@ Run `/sf:phase <feature>` to re-implement the `review` tasks → manual-test →
 
 ## Pipeline recap
 ```
-srs-diff → trace-impact → SD delta via sd-author → CLI `node bin/task-master update --from` cascade
+srs-diff → trace-impact → SD delta via sd-author → CLI `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master update --from` cascade
   → re-open impacted done tasks → regenerate impacted checklist
   → srs-snapshot (new baseline) → trace-build → state-update
 ```

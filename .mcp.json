@@ -3,7 +3,7 @@
     "task-master-ai": {
       "command": "node",
       "args": [
-        "bin/mcp-server.js"
+        "${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.js"
       ]
     }
   }

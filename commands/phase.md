@@ -15,7 +15,7 @@ allowed-tools: Read, Write, Edit, Bash, Agent
 > **Task Master — CLI for AI ops, MCP for state ops.** Any AI-calling op (`parse-prd`,
 > `analyze-complexity`, `expand`, `research`, `update`/`update-subtask`) MUST run via the **CLI** so it
 > reads `.taskmaster/config.json` fresh and uses the keyless `claude-code` provider:
-> `node bin/task-master <cmd> …`. The long-running MCP server caches the
+> `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master <cmd> …`. The long-running MCP server caches the
 > provider from startup and fails AI ops with a stale `PERPLEXITY_API_KEY`/`ANTHROPIC_API_KEY` error.
 > State ops (`next_task`, `set_task_status`, `get_tasks`, `add_task`) call no provider → keep the
 > `mcp__task-master-ai__*` tools. **Fallback:** if any MCP TM call errors with a missing API key, re-run it as the CLI equivalent.
@@ -46,21 +46,21 @@ When not seeded, **the agent seeds them itself** (do NOT hand this to the user) 
 
 `parse-prd` (role `main`):
 ```bash
-node bin/task-master models --set-main "<configured>" --claude-code
-trap "node bin/task-master models --set-main '<previous>' --claude-code" EXIT
-node bin/task-master parse-prd --input .spec-flow/specs/<feature>/SD.md --tag <feature>
+node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main "<configured>" --claude-code
+trap "node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main '<previous>' --claude-code" EXIT
+node ${CLAUDE_PLUGIN_ROOT}/bin/task-master parse-prd --input .spec-flow/specs/<feature>/SD.md --tag <feature>
 ```
 
 `analyze-complexity` (role `research`):
 ```bash
-node bin/task-master models --set-research "<configured>" --claude-code
-trap "node bin/task-master models --set-research '<previous>' --claude-code" EXIT
-node bin/task-master analyze-complexity --tag <feature> --research
+node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-research "<configured>" --claude-code
+trap "node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-research '<previous>' --claude-code" EXIT
+node ${CLAUDE_PLUGIN_ROOT}/bin/task-master analyze-complexity --tag <feature> --research
 ```
 
 Then run the state op (no model involved) separately:
 ```
-node bin/task-master use-tag <feature>
+node ${CLAUDE_PLUGIN_ROOT}/bin/task-master use-tag <feature>
 ```
 
 Use a **per-feature `--tag`** so this feature's tasks stay isolated. Only if the CLI genuinely errors on a missing provider/key do you ask the user to run these in their terminal.
@@ -69,7 +69,7 @@ Use a **per-feature `--tag`** so this feature's tasks stay isolated. Only if the
 > ```
 > node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs taskmaster-model-check
 > ```
-> This is a zero-cost static check: for each role (`main`/`research`/`fallback`) it confirms a keyed provider (`anthropic`, `perplexity`, ...) actually has its required key in env/`.env`. `claude-code`/`ollama` never need a key. If `problems` is non-empty, **do not silently proceed** — surface each problem to the user once, and fix the role before starting the loop (either `node bin/task-master models --set-<role> sonnet --claude-code`, the keyless default `/sf:init` seeds, or add the missing key). Skipping this lets a broken role (e.g. `fallback` pointed at `anthropic` with no `ANTHROPIC_API_KEY`) sit invisible until the exact moment `main` fails mid-phase and the fallback chain has nothing to fall back to — which then burns the per-task loop's time on failed retries instead of doing work. `checked: false` (no `.taskmaster/config.json` yet) → nothing to check, proceed.
+> This is a zero-cost static check: for each role (`main`/`research`/`fallback`) it confirms a keyed provider (`anthropic`, `perplexity`, ...) actually has its required key in env/`.env`. `claude-code`/`ollama` never need a key. If `problems` is non-empty, **do not silently proceed** — surface each problem to the user once, and fix the role before starting the loop (either `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-<role> sonnet --claude-code`, the keyless default `/sf:init` seeds, or add the missing key). Skipping this lets a broken role (e.g. `fallback` pointed at `anthropic` with no `ANTHROPIC_API_KEY`) sit invisible until the exact moment `main` fails mid-phase and the fallback chain has nothing to fall back to — which then burns the per-task loop's time on failed retries instead of doing work. `checked: false` (no `.taskmaster/config.json` yet) → nothing to check, proceed.
 
 > **CRITICAL — set the global current tag (`use-tag`).** Task Master MCP state ops (`next_task`, `set_task_status`, `update-subtask`) bind to the **global `currentTag`** in `tasks.json` and may **ignore** a per-call `tag:` param. If `currentTag` still points at a prior feature, every state op silently operates on the wrong tag — executors fail to log ("wrong tag … requires parentId.subtaskId"), and trace counts read another feature's tasks. So **always run `use-tag <feature>` right after seeding** (and again on resume if you switched features) so `currentTag` == this feature. The engine's `trace-build`/`trace-link`/`state-update`/`status-report` are already tag-scoped via `--feature` and do not depend on `currentTag`.
 
@@ -91,16 +91,16 @@ Returns per-FR complexity scores (1–10):
 - **1-3 → fast**: skip research/plan; go straight to executor.
 - **4-7 → expand**: AI op (CLI, not MCP) — apply the `taskmaster-model-plan` override (role `main`) before running: read the JSON from `taskmaster-model-plan --role main`; if `needsChange: true`, substitute `configured`/`previous` as literal values below (else run the AI op directly):
   ```bash
-  node bin/task-master models --set-main "<configured>" --claude-code
-  trap "node bin/task-master models --set-main '<previous>' --claude-code" EXIT
-  node bin/task-master expand --id=<id>
+  node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main "<configured>" --claude-code
+  trap "node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main '<previous>' --claude-code" EXIT
+  node ${CLAUDE_PLUGIN_ROOT}/bin/task-master expand --id=<id>
   ```
   Then run each subtask as fast.
 - **8-10 → deep**: if the task touches an external integration, run the research AI op first (pass the SD §14 risk row as context) with the override (role `research`) — read the JSON from `taskmaster-model-plan --role research`; if `needsChange: true`, substitute `configured`/`previous` as literal values below (else run the AI op directly):
   ```bash
-  node bin/task-master models --set-research "<configured>" --claude-code
-  trap "node bin/task-master models --set-research '<previous>' --claude-code" EXIT
-  node bin/task-master research "<query>"
+  node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-research "<configured>" --claude-code
+  trap "node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-research '<previous>' --claude-code" EXIT
+  node ${CLAUDE_PLUGIN_ROOT}/bin/task-master research "<query>"
   ```
   Then spawn **hybrid-executor** with extra planning notes.
 
@@ -130,9 +130,9 @@ Returns per-FR complexity scores (1–10):
 
    `update-task --append` (role `main`) — read the JSON from `taskmaster-model-plan --role main`; if `needsChange: true`, substitute `configured`/`previous` as literal values below and run as one combined shell command so the `trap` stays active (else run the AI op directly):
    ```bash
-   node bin/task-master models --set-main "<configured>" --claude-code
-   trap "node bin/task-master models --set-main '<previous>' --claude-code" EXIT
-   node bin/task-master update-task --id=<id> --append --prompt="<files/approach/result>"
+   node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main "<configured>" --claude-code
+   trap "node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main '<previous>' --claude-code" EXIT
+   node ${CLAUDE_PLUGIN_ROOT}/bin/task-master update-task --id=<id> --append --prompt="<files/approach/result>"
    ```
 
    Then, separately (state op — no model involved, do NOT fold into the bash block above):

@@ -68,7 +68,7 @@ If impact spans multiple nodes, or you're unsure, run the full steps below.
 5. **Re-implement**
    Run `/sf:phase` over the `review` tasks:
    - `route --sd .spec-flow/specs/<feature>/SD.md` routes each affected FR to fast/expand/deep.
-   - Executor edits code; logs files/approach/result via CLI `node bin/task-master update-task --id=<id> --append` (not `update-subtask` — it needs a `parent.sub` id and fails for un-expanded tasks).
+   - Executor edits code; logs files/approach/result via CLI `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master update-task --id=<id> --append` (not `update-subtask` — it needs a `parent.sub` id and fails for un-expanded tasks).
    - **TDD (optional, recommended):** when the change is isolable in code and the stack has a unit harness, drive each task RED→GREEN→REFACTOR — failing unit test first, minimal change to green, then clean the diff without altering behavior. The durable regression anchor stays the §13.2 TC / CHECKLIST suite (stack-agnostic); the unit test is the fast inner loop, not a replacement.
    - `mcp__task-master-ai__set_task_status` → `review` after each code change.
    - Manual-test gate (step 6) before each task advances to `done`.

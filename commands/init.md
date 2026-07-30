@@ -41,25 +41,25 @@ Input: `$ARGUMENTS` (all optional; spec-flow auto-detects project name from the 
 
    a. **Init** — skip if `.taskmaster/` already exists; otherwise scaffold via Task Master's own init:
       - Preferred: MCP tool `initialize_project` (projectRoot = cwd, `yes: true`).
-      - Fallback: `node bin/task-master init --yes` (the `task-master` CLI bin — NOT `npx task-master-ai`, which is the MCP server).
+      - Fallback: `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master init --yes` (the `task-master` CLI bin — NOT `npx task-master-ai`, which is the MCP server).
 
    b. **Default to the keyless `claude-code` provider** (uses the Claude Code CLI auth — **no API key**):
       ```
-      node bin/task-master models --set-main sonnet --claude-code
-      node bin/task-master models --set-fallback sonnet --claude-code
-      node bin/task-master models --set-research sonnet --claude-code
+      node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main sonnet --claude-code
+      node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-fallback sonnet --claude-code
+      node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-research sonnet --claude-code
       ```
       **Use the `task-master` CLI binary** (via `-p <pkg> task-master`), NOT `npx task-master-ai …` — the
       `task-master-ai` bin is the MCP server and would just launch the server, silently ignoring `models`.
       Task Master writes its own `.taskmaster/config.json` — spec-flow does not touch it. Verify with
-      `node bin/task-master models` (all three roles should read `claude-code`).
+      `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models` (all three roles should read `claude-code`).
 
 4. **Report** `created` / `alreadyExisted` and the `commitPolicy` from tool output, plus Task Master status (initialised / already present / **deferred** with the manual commands if it failed).
 
 5. **Next**:
    - Commit chosen → tell the user: `git add .spec-flow/ .taskmaster/ && git commit -m "chore: init spec-flow profile"`.
    - Keep local → note `.spec-flow/` was added to `.gitignore`; nothing to commit.
-   - **Provider:** default is **`claude-code` — no API key required** (`parse_prd` / `analyze_complexity` run through your Claude Code session). Only if you prefer your own provider: add `ANTHROPIC_API_KEY` (and `PERPLEXITY_API_KEY` for research) to your environment or `.mcp.json` and switch with `node bin/task-master models --set-main <model> --<provider>`.
+   - **Provider:** default is **`claude-code` — no API key required** (`parse_prd` / `analyze_complexity` run through your Claude Code session). Only if you prefer your own provider: add `ANTHROPIC_API_KEY` (and `PERPLEXITY_API_KEY` for research) to your environment or `.mcp.json` and switch with `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master models --set-main <model> --<provider>`.
 
 6. **Explain the two-tier OVERLAY model**
    ```
