@@ -29,6 +29,11 @@ config:
     port: 6379
 
 # Token payloads — base64-encoded at run time with `tr -d '\n'`.
+# `payload:` = Summer/APISIX X-Userinfo form. Non-Summer projects use `bearer: "${TOKEN}"`
+# (sent as `Authorization: Bearer ...`) instead.
+# In a test, `token: <name>` must match a key here. For an UNAUTHENTICATED request
+# (401 / public-endpoint tests) write `token: none` or omit the `token:` line — both
+# send no auth header at all.
 tokens:
   user_token:
     payload: '{"iat":1772680061,"exp":2088040061,"sub":"${USER_ID}"}'

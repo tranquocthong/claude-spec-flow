@@ -268,6 +268,64 @@ class TestRequestHeaders(unittest.TestCase):
         self.assertEqual(captured["headers"].get("X-Client-Id"), "m1")
 
 
+class TestNoTokenSentinel(unittest.TestCase):
+    """`token: none` means "send no auth header" — the natural way to write a 401 /
+    public-endpoint test. It used to be looked up as a token NAMED "none", miss, and
+    fail the test with `unknown token 'none'` instead of issuing the anonymous request."""
+
+    def _ctx(self, tokens):
+        return {"db": "d", "scripts_dir": ".", "base_url": "http://x",
+                "varstore": VarStore(), "tokens": tokens, "doc": {}}
+
+    def _send(self, req, tokens):
+        from checklist_lib import runner, http
+        captured = {}
+
+        def fake(method, url, headers, body):
+            captured["headers"] = dict(headers)
+            return (200, {}, "")
+
+        orig = http.do_request
+        http.do_request = fake
+        try:
+            result = runner._send_request(req, self._ctx(tokens))
+        finally:
+            http.do_request = orig
+        return result, captured
+
+    def test_token_none_sends_no_auth_header(self):
+        toks = {"user_token": ("Authorization", "Bearer abc")}
+        for spelling in ("none", "None", " none ", "no-auth", "anonymous"):
+            with self.subTest(spelling=spelling):
+                res, cap = self._send({"method": "GET", "path": "/p", "token": spelling}, toks)
+                self.assertEqual(res[0], "http", f"{spelling!r} must issue the request, not error")
+                self.assertEqual(cap["headers"], {}, f"{spelling!r} must send no auth header")
+
+    def test_omitted_token_sends_no_auth_header(self):
+        res, cap = self._send({"method": "GET", "path": "/p"}, {})
+        self.assertEqual(res[0], "http")
+        self.assertEqual(cap["headers"], {})
+
+    def test_declared_token_named_none_still_wins(self):
+        """Backward-compat: an explicitly declared token literally named "none"
+        is still resolved — the sentinel only applies when nothing declares it."""
+        toks = {"none": ("Authorization", "Bearer real")}
+        res, cap = self._send({"method": "GET", "path": "/p", "token": "none"}, toks)
+        self.assertEqual(res[0], "http")
+        self.assertEqual(cap["headers"].get("Authorization"), "Bearer real")
+
+    def test_genuine_typo_still_errors_and_lists_known_tokens(self):
+        from checklist_lib import runner
+        kind, _, msg, _ = runner._send_request(
+            {"method": "GET", "path": "/p", "token": "usr_token"},
+            self._ctx({"user_token": ("Authorization", "Bearer abc")}),
+        )
+        self.assertEqual(kind, "error")
+        self.assertIn("usr_token", msg)
+        self.assertIn("user_token", msg, "error must list the declared token names")
+        self.assertIn("token: none", msg, "error must point at the no-auth spelling")
+
+
 class TestBaseUrlRef(unittest.TestCase):
     """A test/setup can target a named alternate service via base_url_ref (multi-service).
     Without it every request hits the default base_url → cross-service tests 404."""

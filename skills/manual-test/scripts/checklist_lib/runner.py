@@ -20,6 +20,11 @@ from .vars import VarStore
 
 GREEN, RED, YELLOW, RESET, BOLD = "\033[32m", "\033[31m", "\033[33m", "\033[0m", "\033[1m"
 
+# `token:` values that mean "send no auth header at all" (unauthenticated request).
+# YAML `token:` / `token: ~` already parse to None; these are the spellings a human
+# writes when they mean the same thing.
+_NO_TOKEN = {"none", "null", "no-auth", "noauth", "anonymous", "false", "-"}
+
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser()
@@ -62,9 +67,20 @@ def _send_request(req, ctx):
         return ("error", None, berr, None)
     headers = {}
     tname = req.get("token")
+    # `token: none` (and friends) means "send NO auth header" — the natural way to
+    # write an unauthenticated / 401 test. Treated literally it looked up a token
+    # named "none", missed, and failed the test with `unknown token 'none'` instead
+    # of actually issuing the anonymous request. A real token declared under that
+    # name still wins, so this stays backward-compatible.
+    if tname and str(tname).strip().lower() in _NO_TOKEN and tname not in ctx["tokens"]:
+        tname = None
     if tname:
         if tname not in ctx["tokens"]:
-            return ("error", None, f"unknown token '{tname}'", None)
+            known = ", ".join(sorted(ctx["tokens"])) or "(none declared)"
+            return ("error", None,
+                    f"unknown token '{tname}' — declared tokens: {known}. "
+                    f"For an unauthenticated request use `token: none` or omit `token:`.",
+                    None)
         k, v = ctx["tokens"][tname]
         headers[k] = v
     # Explicit per-test headers (var-expanded). Applied after the token so a test

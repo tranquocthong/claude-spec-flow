@@ -110,9 +110,15 @@ Each test has exactly one `request` block. Pick the shape that matches the featu
 | Field | HTTP | Kafka |
 |-------|------|-------|
 | `method` + `path` + `token` + `body` | ✅ | — |
+| `token: none` (or omit `token:`) → **send no auth header** | ✅ | — |
 | `kafka.topic` + `kafka.payload` (or `payload_file`) | — | ✅ |
 | `kafka.key` (partition key) | — | optional |
 | `kafka.headers` (e.g. `userinfo`, `traceparent`) | — | optional |
+
+`token:` names an entry in the top-level `tokens:` map. **For an unauthenticated
+request — the 401/anonymous-access tests — write `token: none` or leave `token:` out
+entirely.** Both send zero auth headers. Any other unmatched name is a real error
+(the runner lists the declared token names so you can spot the typo).
 
 For Kafka tests, `expect` has no HTTP `status` — use `poll` (poll DB/Redis until the expected state) to settle the async consumer.
 
