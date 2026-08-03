@@ -180,27 +180,149 @@ class TestSqlScalarVerify(unittest.TestCase):
         self.vs = VarStore()
 
     def test_numeric_equality(self):
-        self.assertTrue(sql._check_scalar("1", 1, self.vs)[0])
-        self.assertFalse(sql._check_scalar("0", 1, self.vs)[0])
+        self.assertTrue(sql.check_scalar("1", 1, self.vs)[0])
+        self.assertFalse(sql.check_scalar("0", 1, self.vs)[0])
 
     def test_string_equality(self):
-        self.assertTrue(sql._check_scalar("PENDING", "PENDING", self.vs)[0])
-        self.assertFalse(sql._check_scalar("DONE", "PENDING", self.vs)[0])
+        self.assertTrue(sql.check_scalar("PENDING", "PENDING", self.vs)[0])
+        self.assertFalse(sql.check_scalar("DONE", "PENDING", self.vs)[0])
 
     def test_operator_forms(self):
-        self.assertTrue(sql._check_scalar("5", "> 3", self.vs)[0])
-        self.assertFalse(sql._check_scalar("2", "> 3", self.vs)[0])
-        self.assertTrue(sql._check_scalar("3", ">= 3", self.vs)[0])
+        self.assertTrue(sql.check_scalar("5", "> 3", self.vs)[0])
+        self.assertFalse(sql.check_scalar("2", "> 3", self.vs)[0])
+        self.assertTrue(sql.check_scalar("3", ">= 3", self.vs)[0])
 
     def test_timestamp_lexicographic_vs_test_start(self):
         later = "2099-01-01 00:00:00.000000+00"
         earlier = "2000-01-01 00:00:00.000000+00"
-        self.assertTrue(sql._check_scalar(later, "> ${TEST_START}", self.vs)[0])
-        self.assertFalse(sql._check_scalar(earlier, "> ${TEST_START}", self.vs)[0])
+        self.assertTrue(sql.check_scalar(later, "> ${TEST_START}", self.vs)[0])
+        self.assertFalse(sql.check_scalar(earlier, "> ${TEST_START}", self.vs)[0])
 
     def test_dict_and_none_are_descriptive(self):
-        self.assertIsNone(sql._check_scalar("x", {"a": 1}, self.vs)[0])
-        self.assertIsNone(sql._check_scalar("x", None, self.vs)[0])
+        self.assertIsNone(sql.check_scalar("x", {"a": 1}, self.vs)[0])
+        self.assertIsNone(sql.check_scalar("x", None, self.vs)[0])
+
+
+class TestMultiDatabase(unittest.TestCase):
+    """`db_ref:` is the DB-side twin of `base_url_ref:`. Without it a feature spanning
+    two services shared ONE connection, so the far side could not be SQL-verified at
+    all — tests had to infer a downstream write from an HTTP side-channel."""
+
+    def setUp(self):
+        self.vs = VarStore()
+        self.dbs = {"wallet": "wallet_db", "payment": {"database": "payment_db", "port": 2432}}
+
+    def test_flags_for_plain_name(self):
+        self.assertEqual(sql.db_flags("wallet_db"), ["-d", "wallet_db"])
+
+    def test_flags_for_connection_spec(self):
+        flags = sql.db_flags({"database": "payment_db", "host": "db2", "port": 2432})
+        self.assertEqual(flags, ["-d", "payment_db", "--host", "db2", "--port", "2432"])
+
+    def test_unset_spec_fields_are_omitted_so_creds_discovery_still_applies(self):
+        self.assertEqual(sql.db_flags({"database": "d", "host": "", "user": None}), ["-d", "d"])
+
+    def test_resolve_default_when_no_ref(self):
+        self.assertEqual(sql.resolve_db({}, "default_db", self.dbs), "default_db")
+
+    def test_resolve_named_ref(self):
+        self.assertEqual(sql.resolve_db({"db_ref": "wallet"}, "default_db", self.dbs), "wallet_db")
+
+    def test_unknown_ref_raises_instead_of_falling_back(self):
+        # Falling back to the default DB would query the WRONG server and PASS green.
+        with self.assertRaises(RuntimeError) as cm:
+            sql.resolve_db({"db_ref": "ledger"}, "default_db", self.dbs)
+        self.assertIn("unknown db_ref 'ledger'", str(cm.exception))
+        self.assertIn("payment, wallet", str(cm.exception))
+
+    def test_setup_step_routes_to_the_referenced_db(self):
+        from checklist_lib import setup, sql as sqlmod
+        seen = []
+        orig, sqlmod.run_sql = sqlmod.run_sql, lambda s, db, d: (seen.append(db), "1")[1]
+        try:
+            ctx = {"db": "default_db", "dbs": self.dbs, "scripts_dir": ".",
+                   "base_url": "", "varstore": VarStore(), "tokens": {}, "doc": {}}
+            err = setup.run_steps([{"sql": "SELECT 1", "db_ref": "payment"}], ctx)
+        finally:
+            sqlmod.run_sql = orig
+        self.assertIsNone(err)
+        self.assertEqual(seen, [{"database": "payment_db", "port": 2432}])
+
+    def test_verify_item_routes_to_the_referenced_db(self):
+        from checklist_lib import sql as sqlmod
+        seen = []
+        orig, sqlmod.run_sql = sqlmod.run_sql, lambda s, db, d: (seen.append(db), "OK")[1]
+        try:
+            ok, errs, _ = sqlmod.verify_sql(
+                [{"sql": "SELECT status", "expect": "OK", "db_ref": "wallet"}],
+                "default_db", ".", self.vs, self.dbs)
+        finally:
+            sqlmod.run_sql = orig
+        self.assertTrue(ok, errs)
+        self.assertEqual(seen, ["wallet_db"])
+
+    def test_verify_unknown_ref_is_a_failure_not_a_silent_default(self):
+        ok, errs, _ = sql.verify_sql([{"sql": "SELECT 1", "db_ref": "nope"}],
+                                     "default_db", ".", self.vs, self.dbs)
+        self.assertFalse(ok)
+        self.assertIn("unknown db_ref 'nope'", errs[0])
+
+    def test_poll_unknown_ref_fails_fast_without_looping(self):
+        ok, detail = sql.poll({"sql": "SELECT 1", "until": "x", "db_ref": "nope"},
+                              "default_db", ".", self.vs, self.dbs)
+        self.assertFalse(ok)
+        self.assertIn("unknown db_ref 'nope'", detail)
+
+    def test_db_spec_normalization(self):
+        from checklist_lib.runner import _db_spec
+        self.assertEqual(_db_spec("other_db", self.vs, "default_db"), "other_db")
+        # A mapping that overrides only the port still needs a database name.
+        self.assertEqual(_db_spec({"port": 2432}, self.vs, "default_db"),
+                         {"port": "2432", "database": "default_db"})
+
+
+class TestSetupSqlGuard(unittest.TestCase):
+    """`expect:` on a setup sql step is a pre-state GUARD. Silently ignoring it (the
+    old behaviour) let a test run on an unconfirmed baseline and PASS for the wrong
+    reason — the template advertises it as `# pre-state confirmed`."""
+
+    def _ctx(self):
+        return {"db": "d", "scripts_dir": ".", "base_url": "", "varstore": VarStore(), "tokens": {}, "doc": {}}
+
+    def _run(self, step, sql_result, **kw):
+        from checklist_lib import setup, sql as sqlmod
+        orig, sqlmod.run_sql = sqlmod.run_sql, lambda *a, **k: sql_result
+        try:
+            ctx = self._ctx()
+            return setup.run_steps([step], ctx, **kw), ctx
+        finally:
+            sqlmod.run_sql = orig
+
+    def test_matching_expect_passes(self):
+        err, _ = self._run({"sql": "SELECT status", "expect": "CREATED"}, "CREATED")
+        self.assertIsNone(err)
+
+    def test_mismatched_expect_aborts(self):
+        err, _ = self._run({"sql": "SELECT status", "expect": "CREATED"}, "DRAFT")
+        self.assertIsNotNone(err)
+        self.assertIn("setup sql guard failed", err)
+
+    def test_operator_form_and_capture_still_work(self):
+        err, ctx = self._run({"sql": "SELECT count(*)", "expect": "> 0", "capture": {"N": "scalar"}}, "3")
+        self.assertIsNone(err)
+        self.assertEqual(ctx["varstore"].get("N"), "3")
+
+    def test_dict_expect_stays_descriptive(self):
+        err, _ = self._run({"sql": "SELECT a, b", "expect": {"a": 1}}, "9|9")
+        self.assertIsNone(err)
+
+    def test_no_expect_is_a_no_op(self):
+        err, _ = self._run({"sql": "SELECT 1"}, "anything")
+        self.assertIsNone(err)
+
+    def test_teardown_guard_warns_instead_of_aborting(self):
+        err, _ = self._run({"sql": "SELECT status", "expect": "GONE"}, "STILL_THERE", warn_only=True)
+        self.assertIsNone(err)
 
 
 class TestExecSetupStep(unittest.TestCase):

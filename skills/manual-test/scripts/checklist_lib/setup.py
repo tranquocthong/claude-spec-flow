@@ -1,8 +1,12 @@
 """Setup/teardown step executor.
 
 Each step is one of:
-  - sql: "..."            run SQL (optional `capture: {VAR: ...}` → first scalar)
+  - sql: "..."            run SQL (optional `capture: {VAR: ...}` → first scalar;
+                          optional `expect:` → pre-state GUARD, aborts the test on
+                          mismatch. Scalar expect asserts; dict expect is descriptive.
+                          optional `db_ref:` → another service's database.)
   - seed: name            run the named snippet from the top-level `seed:` map
+                          (optional `db_ref:`)
   - http: {...}           call an endpoint (optional `capture: {VAR: "$.json.path"}`)
   - redis: |              run redis-cli line(s)
   - exec: "cmd"           run a project command; capture stdout into vars
@@ -12,7 +16,7 @@ Each step is one of:
                           pre-compute lives in the PROJECT's script — not in this runner.
   - vars: {NAME: value}   set variables inline (values are ${VAR}-expanded)
 
-`ctx` carries: db, scripts_dir, base_url, varstore, tokens, doc.
+`ctx` carries: db, dbs, scripts_dir, base_url, base_urls, varstore, tokens, doc.
 """
 import json
 import subprocess
@@ -55,13 +59,21 @@ def _do_sql(sb, ctx, dry_run):
     if dry_run:
         return
     vs = ctx["varstore"]
-    result = sql.run_sql(vs.expand(sb["sql"]), ctx["db"], ctx["scripts_dir"])
-    cap = sb.get("capture")
-    if cap:
-        scalar = result.splitlines()[0].strip() if result else ""
-        # SQL capture is scalar: first column of the first row → each named var.
-        for var in cap:
-            vs.set(var, scalar)
+    target = sql.resolve_db(sb, ctx["db"], ctx.get("dbs"))
+    result = sql.run_sql(vs.expand(sb["sql"]), target, ctx["scripts_dir"])
+    # SQL capture is scalar: first column of the first row → each named var.
+    scalar = result.splitlines()[0].strip() if result else ""
+    for var in sb.get("capture") or {}:
+        vs.set(var, scalar)
+    # `expect:` on a setup sql is a pre-state GUARD, not a comment. A seed that
+    # landed in the wrong state must abort the test — otherwise the test runs on
+    # an unconfirmed baseline and can PASS for the wrong reason. Scalar expect is
+    # a hard assertion; a dict expect stays descriptive (see this module's sql.py).
+    ok, detail = sql.check_scalar(scalar, sb.get("expect"), vs)
+    if ok is False:
+        raise RuntimeError(f"setup sql guard failed — {detail}\n        query: {vs.expand(sb['sql'])}")
+    if ok:
+        print(f"      setup guard OK: {detail}")
 
 
 def _do_seed(sb, ctx, dry_run):
@@ -70,7 +82,8 @@ def _do_seed(sb, ctx, dry_run):
     if snippet is None:
         raise RuntimeError(f"seed '{name}' not defined in top-level seed:")
     if not dry_run:
-        sql.run_sql(ctx["varstore"].expand(snippet), ctx["db"], ctx["scripts_dir"])
+        target = sql.resolve_db(sb, ctx["db"], ctx.get("dbs"))
+        sql.run_sql(ctx["varstore"].expand(snippet), target, ctx["scripts_dir"])
 
 
 def _do_http(sb, ctx, dry_run):

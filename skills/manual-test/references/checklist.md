@@ -74,13 +74,30 @@ Auto-injected vars: `${TEST_CORRELATION_ID}` (stable per run) and `${TEST_START}
 `updated_at > ${TEST_START}` comparisons hold). `capture:` extracts a var from an
 `http` setup response (`{VAR: "$.id"}`, JSONPath) or a `sql` setup (first scalar).
 
+**Multi-service databases.** `config.databases` declares named alternates and any
+`sql` step (`setup` / `teardown` / `verify` item / `expect.poll` / `cleanup`) selects
+one with `db_ref: <name>` — the DB-side twin of `base_url_ref:`. Without it a feature
+spanning two services could only be verified on the near side, and the far side had
+to be inferred from an HTTP side-channel. An undefined `db_ref` **fails the test**; it
+does not fall back to the default database, because querying the wrong server would
+report a green PASS. Only `database:` is read from `config.db` — host/port/user/
+password come from `db-creds.sh` discovery, and a `databases:` entry likewise
+inherits every field it does not set.
+
+A `sql` setup step may also carry `expect:` — a **pre-state guard**. Scalar `expect`
+is a hard assertion: on mismatch the setup aborts and the test FAILs instead of
+running against an unconfirmed baseline (in `teardown` it degrades to a warning).
+Dict `expect` stays descriptive, same rule as a `verify:` block.
+
 ## YAML Structure
 
 The canonical, runnable, fully-annotated example is **`templates/CHECKLIST.yaml`**
 (copy it to start a new checklist). The top-level shape:
 
 ```yaml
-config:   { base_url, db: {database, ...}, redis: {host, port}, vars: {NAME: value} }
+config:   { base_url, base_urls: {<name>: url}, db: {database},
+            databases: {<name>: <db-name> | {database, host, port, user, password}},
+            redis: {host, port}, vars: {NAME: value} }
 tokens:   { <name>: { payload | auth: keycloak_ropc | type: keycloak-client-credentials } }
 seed:     { <name>: <SQL snippet> }      # referenced from setup via `- seed: <name>`
 cleanup:  { all: <SQL> }                 # runs once after all suites

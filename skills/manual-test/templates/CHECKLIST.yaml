@@ -18,12 +18,18 @@ config:
     RESOURCE_NAME: my-service
     FEATURE: example-feature
   base_url: http://localhost:${SERVER_PORT:-8080}
+  # Default database. Only `database:` is read here — host/port/user/password are
+  # auto-discovered per run by scripts/db-creds.sh (.env / application.yml), so
+  # hardcoding them here would override a correct discovery with a stale guess.
   db:
-    host: localhost
-    port: 5432
     database: ${DB_NAME}
-    username: ${DB_USER:-postgres}
-    password: ${DB_PASS:-postgres}
+  # Multi-service: named alternate databases, the DB-side twin of `base_urls:`.
+  # A step targets one with `db_ref: <name>` (setup / teardown / verify / poll /
+  # cleanup). A value is either a plain database NAME (same server) or a mapping;
+  # any field left out still comes from db-creds.sh discovery.
+  # databases:
+  #   payment: payment_db                        # same server, different database
+  #   ledger:  { database: ledger_db, port: 2432 }   # different server
   redis:
     host: localhost
     port: 6379

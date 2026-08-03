@@ -39,7 +39,7 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
    - Spawn **sd-author** with: new SRS + current SD + impacted FR/TC IDs from step 2 + `CONTEXT.md` **+ an explicit first line of the spawn prompt: `Author all SD/CONTEXT prose in language: <config.language>`** (read `config.language`, default `en`; skip the directive when `en`). Surfacing it explicitly is what makes the language take effect — don't rely on the sub-agent reading `config.json` on its own. sd-author re-derives only impacted reasoning sections; marks touched sections `TODO:MANUAL-REVIEW`. **Model:** read `config.json → models.sdAuthor`; if set to a non-null value, pass it as the Agent tool's `model` param. If absent/`null` (the default), omit the param — sd-author inherits the main session's model.
 
 4. **Gate — wait for review**
-   Report SD delta diff + remaining `TODO:MANUAL-REVIEW` count. **Refuse to cascade tasks while any TODO marker remains.**
+   Report SD delta diff + remaining `TODO:MANUAL-REVIEW` count — count with `grep -cE '^> \*\*TODO:MANUAL-REVIEW\*\*'`, never a bare string grep (that also matches the preamble banner, the Pass-2 summary line, and revision-history prose). **Refuse to cascade tasks while any TODO marker remains.**
 
 5. **Cascade tasks** (AI op → CLI, not MCP — MCP fails on a stale-cached provider)
    ```

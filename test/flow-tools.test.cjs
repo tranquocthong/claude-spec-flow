@@ -991,6 +991,42 @@ test('checklist-gen: SD §13.2 TC table → CHECKLIST.yaml scaffold with suites 
   assert.match(yaml, /detected auth: unknown/, 'unknown auth → advisory comment names the detection result');
 });
 
+test('checklist-gen: smoke is the happy-path spine — first non-edge TC per flow only', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'tags');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: tags', '',
+    '## 9. API Design', '',
+    '| Method | Path |', '| --- | --- |', '| POST | /api/v1/transfers |', '',
+    '## 13.2 Test Cases', '',
+    '| TC ID | Flow | Test Case | Expected Result | FR |',
+    '| --- | --- | --- | --- | --- |',
+    '| TC-001 | Transfer | Valid transfer | 200 | FR-001 |',
+    '| TC-002 | Transfer | Insufficient balance | 422 | FR-001 |',
+    '| TC-003 | Transfer | Duplicate request id | 409 | FR-001 |',
+    '| TC-004 | Refund | Edge: zero amount | 422 | FR-002 |',
+    '| TC-005 | Refund | Valid refund | 200 | FR-002 |', '',
+  ].join('\n'));
+  const r = run(['checklist-gen', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'tags'], dir);
+  assert.equal(r.ok, true, 'checklist-gen ok');
+  const yaml = fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'tags', 'CHECKLIST.yaml'), 'utf8');
+  const tagOf = (id) => {
+    const m = yaml.match(new RegExp(`- id: ${id}\\n[\\s\\S]*?tags: \\[([^\\]]+)\\]`));
+    return m ? m[1] : null;
+  };
+  // One smoke per flow — otherwise `--tag smoke` runs the whole checklist and the
+  // smoke → regression escalation the skill promises stops meaning anything.
+  assert.equal(tagOf('TC-001'), 'smoke', 'first TC of a flow is that flow\'s smoke test');
+  assert.equal(tagOf('TC-002'), 'regression', 'second TC of the same flow is regression');
+  assert.equal(tagOf('TC-003'), 'regression', 'third TC of the same flow is regression');
+  // A flow whose first row is an `Edge:` case must not promote it to smoke.
+  assert.equal(tagOf('TC-004'), 'regression', 'leading Edge: TC stays regression');
+  assert.equal(tagOf('TC-005'), 'smoke', 'first NON-edge TC of the flow is the smoke test');
+  assert.equal((yaml.match(/tags: \[smoke\]/g) || []).length, 2, 'exactly one smoke test per flow (2 flows)');
+});
+
 test('checklist-gen: --auth jwt-basic scaffolds a bearer token, not X-Userinfo payload', () => {
   const dir = tmpProject();
   initProject(dir);

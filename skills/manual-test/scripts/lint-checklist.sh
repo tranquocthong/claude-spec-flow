@@ -6,6 +6,7 @@
 #   - "SELECT 1 -- TODO" placeholder verify queries
 #   - request.path containing `{` (unresolved path templates from scaffolding)
 #   - Empty `tests:` array
+#   - `db_ref` / `base_url_ref` naming something not declared in config
 #
 # Exits 0 if checklist is clean, 1 otherwise with structured error list.
 #
@@ -62,6 +63,27 @@ def walk(node, where):
             issues.append(f"{where}: placeholder 'SELECT 1 --' verify query — replace with real SQL")
 
 walk(doc, "$")
+
+# Undeclared db_ref / base_url_ref. Both fail the run anyway, but a typo'd ref that
+# only surfaces once the suite is half-executed wastes a full manual-test cycle.
+_cfg = doc.get("config") or {}
+_refs = (("db_ref", set(_cfg.get("databases") or {}), "config.databases"),
+         ("base_url_ref", set(_cfg.get("base_urls") or {}), "config.base_urls"))
+
+def walk_refs(node, where):
+    if isinstance(node, dict):
+        for key, declared, cfg_key in _refs:
+            ref = node.get(key)
+            if ref and str(ref) not in declared:
+                known = ", ".join(sorted(declared)) or "(none declared)"
+                issues.append(f"{where}.{key}: unknown '{ref}' — declared: {known}. Add it under {cfg_key}.")
+        for k, v in node.items():
+            walk_refs(v, f"{where}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            walk_refs(v, f"{where}[{i}]")
+
+walk_refs(doc, "$")
 
 suites = doc.get("suites", [])
 if not suites:

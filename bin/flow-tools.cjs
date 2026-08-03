@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
+  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, countSdTodos, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
 } = require('../lib/core.cjs');
 const maintenance = require('../lib/maintenance.cjs');
 const drift = require('../lib/drift.cjs');
@@ -109,7 +109,11 @@ const commands = {
     // `--type`, or fall back to whether the SD has a §9 API section.
     const sdText = fs.readFileSync(sd, 'utf8');
     const dtMatch = sdText.match(/Design type:\s*\*\*([^*]+)\*\*/i);
-    const hasApiSection = /^#{2,3}\s*9(\.\d+)?\s+API/im.test(sdText);
+    // `\.?` after the optional sub-number: the template's own top heading is
+    // `## 9. API Design`, which the stricter form missed (it only matched via the
+    // `### 9.2 API Endpoints` subsection) — an SD with §9 but no §9.x subsection
+    // silently classified as `internal` and got the live-e2e scaffold.
+    const hasApiSection = /^#{2,3}\s*9(\.\d+)?\.?\s+API/im.test(sdText);
     const designType = String(args.type || (dtMatch && dtMatch[1]) || (hasApiSection ? 'api' : 'internal')).trim().toLowerCase();
     const httpSurface = designType === 'api' || designType === 'hybrid' || hasApiSection;
     const q = (s) => '"' + String(s || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
@@ -202,12 +206,21 @@ const commands = {
     let s = 0;
     for (const flow of Object.keys(byFlow)) {
       s++;
+      // Smoke is the HAPPY-PATH SPINE, not the whole suite. Tagging every non-`Edge:`
+      // test `smoke` made `--tag smoke` run the full set, collapsing the smoke →
+      // regression escalation the skill promises: an SD whose §13.2 doesn't use the
+      // `Edge:` naming convention (most of them) produced an all-smoke checklist.
+      // Rule: the FIRST non-edge TC of each flow is that flow's smoke test; every
+      // other TC — edge or not — is regression. One smoke test per user story.
+      const tests = byFlow[flow];
+      const smokeIdx = tests.findIndex(t => !t.isEdge);
       L.push(`  - id: suite-${s}`);
       L.push(`    name: ${q(flow)}`);
-      L.push('    tags: [smoke, regression]');
+      L.push(`    tags: [${smokeIdx >= 0 && tests.length > 1 ? 'smoke, regression' : smokeIdx >= 0 ? 'smoke' : 'regression'}]`);
       L.push('    tests:');
-      for (const t of byFlow[flow]) {
-        const tag = t.isEdge ? 'regression' : 'smoke';
+      for (let ti = 0; ti < tests.length; ti++) {
+        const t = tests[ti];
+        const tag = ti === smokeIdx ? 'smoke' : 'regression';
         // Expected goes in a COMMENT (free SD prose — never inside a YAML value,
         // which would break the parser on backticks/quotes). The lint tripwire is
         // the clean `path: /api/v1/TODO` + `_assert: TODO` tokens.
@@ -1114,7 +1127,7 @@ const commands = {
       nextStep = 'No SD — run `/sf:ingest <srs>`.';
     } else {
       let sdTodos = 0;
-      try { sdTodos = (fs.readFileSync(sdPath, 'utf8').match(/^>\s*\*\*TODO:MANUAL-REVIEW\*\*/gm) || []).length; } catch {}
+      try { sdTodos = countSdTodos(fs.readFileSync(sdPath, 'utf8')); } catch {}
       if (sdTodos > 0) {
         nextStep = `SD has ${sdTodos} \`TODO:MANUAL-REVIEW\` — clear + approve, then \`/sf:checklist ${featureName}\` (no \`parse_prd\` until 0).`;
       } else if (!fs.existsSync(checklistPath)) {
@@ -2134,7 +2147,7 @@ const commands = {
     let sdExists = false;
     if (sdPath && fs.existsSync(sdPath)) {
       sdExists = true;
-      try { sdTodos = (fs.readFileSync(sdPath, 'utf8').match(/^>\s*\*\*TODO:MANUAL-REVIEW\*\*/gm) || []).length; } catch {}
+      try { sdTodos = countSdTodos(fs.readFileSync(sdPath, 'utf8')); } catch {}
     }
 
     // Trace counts

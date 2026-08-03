@@ -4,12 +4,107 @@
 # Plus diagnostic hints to stderr.
 #
 # Usage: scripts/detect-auth.sh [project-root]
+#
+# Multi-repo aware: if the root is a spec-flow hub whose .spec-flow/config.json
+# declares `repos`, the SERVICE repos are classified instead of the hub.
 
 set -u
+# Resolve HERE BEFORE cd'ing into the project: $0 is usually relative, so computing
+# it afterwards resolves against the wrong directory (harmless while nothing used
+# HERE across the cd, fatal once this script re-invokes itself for multi-repo).
+HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${1:-.}"
 cd "$ROOT" 2>/dev/null || { echo "Project root not found: $ROOT" >&2; exit 1; }
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
+# ─── Multi-repo hub (.spec-flow/config.json → repos) ──────────────────────────
+# A spec-flow hub repo can hold only the docs (SRS/SD) while the services it
+# describes live in sibling repos declared under `config.repos`. Classifying the
+# hub answers a question about the wrong tree: there is no service code there, so
+# every dependency check and source grep below falls through and the detector
+# reports a CONFIDENT WRONG type (a Summer/APISIX project reads as custom-Bearer,
+# i.e. exactly inverted). Classify each declared repo and reconcile instead.
+# SF_AUTH_CHILD guards the recursion; anything unresolvable degrades to the plain
+# single-repo path below, so a non-hub project is unaffected.
+TAB="$(printf '\t')"
+if [ -z "${SF_AUTH_CHILD:-}" ] && [ -f .spec-flow/config.json ] && command -v node >/dev/null 2>&1; then
+  REPO_LIST="$(node -e '
+    try {
+      const c = require(process.cwd() + "/.spec-flow/config.json");
+      const r = (c && typeof c.repos === "object" && c.repos) || {};
+      for (const [n, p] of Object.entries(r)) if (n && p) console.log(n + "\t" + p);
+    } catch (e) { /* unreadable config → single-repo path */ }
+  ' 2>/dev/null)"
+
+  RESULTS=""   # one line per repo: name<TAB>type<TAB>stderr-file
+  if [ -n "$REPO_LIST" ]; then
+    while IFS="$TAB" read -r RNAME RPATH; do
+      [ -n "${RNAME:-}" ] && [ -n "${RPATH:-}" ] || continue
+      case "$RPATH" in /*) RDIR="$RPATH" ;; *) RDIR="$PWD/$RPATH" ;; esac
+      [ -d "$RDIR" ] || {
+        echo "config.repos[\"$RNAME\"] → $RPATH does not exist; skipped for auth detection." >&2
+        continue
+      }
+      RERR="$(mktemp)"
+      RTYPE="$(SF_AUTH_CHILD=1 "$HERE/detect-auth.sh" "$RDIR" 2>"$RERR")"
+      RESULTS="${RESULTS}${RNAME}${TAB}${RTYPE:-unknown}${TAB}${RERR}
+"
+    done <<EOF
+$REPO_LIST
+EOF
+  fi
+
+  if [ -n "$RESULTS" ]; then
+    SIGNALS=""   # space-delimited distinct classifications that carry signal
+    ALL_NO_AUTH=1
+    echo "Multi-repo: classified the service repos from .spec-flow/config.json, not this hub." >&2
+    while IFS="$TAB" read -r RNAME RTYPE RERR; do
+      [ -n "${RNAME:-}" ] || continue
+      echo "  - $RNAME → $RTYPE" >&2
+      [ "$RTYPE" = "no-auth" ] || ALL_NO_AUTH=0
+      case "$RTYPE" in
+        unknown|no-auth) ;;
+        *) case " $SIGNALS " in *" $RTYPE "*) ;; *) SIGNALS="$SIGNALS $RTYPE" ;; esac ;;
+      esac
+    done <<EOF
+$RESULTS
+EOF
+
+    # shellcheck disable=SC2086
+    set -- $SIGNALS
+    if [ "$#" -eq 1 ]; then
+      # One repo carries the signal (or they all agree) → that is the answer, and
+      # the winning repo's own hints are the ones worth forwarding.
+      echo "$1"
+      while IFS="$TAB" read -r RNAME RTYPE RERR; do
+        [ "${RTYPE:-}" = "$1" ] || continue
+        echo >&2; cat "$RERR" >&2; break
+      done <<EOF
+$RESULTS
+EOF
+    elif [ "$#" -eq 0 ]; then
+      [ "$ALL_NO_AUTH" -eq 1 ] && echo "no-auth" || echo "unknown"
+      echo "No repo carried an auth signal — treat the classification as a guess." >&2
+    else
+      # Genuinely different models across services. Picking one scaffolds a token
+      # that 401s every test on the others, so say so instead of guessing.
+      echo "unknown"
+      {
+        echo
+        echo "CONFLICT: the declared repos disagree on the auth model (${SIGNALS# })."
+        echo "No single scaffold is right for all of them. Pick per feature:"
+        echo "  checklist-gen --auth <type>   (or hand-edit tokens.user_token)"
+      } >&2
+    fi
+
+    while IFS="$TAB" read -r RNAME RTYPE RERR; do
+      [ -n "${RERR:-}" ] && rm -f "$RERR"
+    done <<EOF
+$RESULTS
+EOF
+    exit 0
+  fi
+fi
+
 STACK=$("$HERE/detect-stack.sh" "$ROOT" 2>/dev/null)
 
 # Cross-stack fallback: a hand-rolled `Authorization: Bearer <token>` scheme has

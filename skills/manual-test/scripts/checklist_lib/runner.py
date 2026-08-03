@@ -53,6 +53,17 @@ def _resolve_base(spec, ctx):
     return url, None
 
 
+def _db_spec(val, vs, default_db):
+    """Normalize one config.databases entry. String → just the database name (same
+    server). Mapping → per-field connection spec, `database:` defaulting to config.db
+    so an entry can override only the port/host."""
+    if isinstance(val, dict):
+        spec = {k: vs.expand(str(v)) for k, v in val.items() if v is not None}
+        spec.setdefault("database", default_db)
+        return spec
+    return vs.expand(str(val))
+
+
 def _send_request(req, ctx):
     """Execute the request. Returns (kind, status, body, raw) or kafka (ok, msg)."""
     vs = ctx["varstore"]
@@ -97,7 +108,8 @@ def _send_request(req, ctx):
 def _run_verify(verify_block, ctx, errs, msgs):
     sql_items = [v for v in verify_block if "sql" in v]
     if sql_items:
-        ok, verrs, vmsgs = sql.verify_sql(sql_items, ctx["db"], ctx["scripts_dir"], ctx["varstore"])
+        ok, verrs, vmsgs = sql.verify_sql(sql_items, ctx["db"], ctx["scripts_dir"],
+                                          ctx["varstore"], ctx.get("dbs"))
         errs.extend(verrs)
         msgs.extend(vmsgs)
     for vb in verify_block:
@@ -136,13 +148,22 @@ def main(argv=None):
     # Multi-service: named alternate base URLs (e.g. {auth_base_url: ...}). A test or
     # setup step picks one with `base_url_ref: <name>`; default stays `base_url`.
     base_urls = {k: vs.expand(str(v)) for k, v in (cfg.get("base_urls") or {}).items()}
+    # Multi-service, DB side: named alternate databases, symmetric with base_urls. A
+    # feature spanning two services (wallet_db@5432 + payment_db@2432) could not be
+    # SQL-verified on the far side at all — every step shared one connection — which
+    # forced tests to prove a downstream write through an HTTP side-channel instead.
+    # A value is either a plain database NAME (same server) or a mapping with any of
+    # database/host/port/user/password; unset fields fall back to db-creds.sh.
+    dbs = {k: _db_spec(v, vs, db_name) for k, v in (cfg.get("databases") or {}).items()}
 
-    ctx = {"db": db_name, "scripts_dir": args.scripts_dir, "base_url": base_url,
+    ctx = {"db": db_name, "dbs": dbs, "scripts_dir": args.scripts_dir, "base_url": base_url,
            "base_urls": base_urls, "varstore": vs, "tokens": {}, "doc": doc}
 
     print(f"checklist: {args.checklist}")
     print(f"base_url:  {base_url}")
     print(f"db:        {db_name}")
+    for name, spec in dbs.items():
+        print(f"db[{name}]: {sql.db_label(spec)}")
     print(f"corr-id:   {vs.get('TEST_CORRELATION_ID')}")
     if args.tag:
         print(f"filter:    tag={args.tag}")
@@ -213,12 +234,12 @@ def main(argv=None):
                     msgs.append(f"      {b}")
                     poll_def = exp.get("poll")
                     if poll_def:
-                        ok, detail = sql.poll(poll_def, db_name, args.scripts_dir, vs)
+                        ok, detail = sql.poll(poll_def, db_name, args.scripts_dir, vs, dbs)
                         (msgs if ok else errs).append(f"      poll: {detail}" if ok else f"poll: {detail}")
             else:  # http
                 status, body, raw = a, b, c
                 if exp.get("poll"):
-                    ok, detail = sql.poll(exp["poll"], db_name, args.scripts_dir, vs)
+                    ok, detail = sql.poll(exp["poll"], db_name, args.scripts_dir, vs, dbs)
                     (msgs if ok else errs).append(f"      poll: {detail}" if ok else f"poll: {detail}")
                 a_errs = assertions.assert_expect(exp, status, body, raw, vs)
                 if a_errs and body is None and (exp.get("json_path") or exp.get("body")):
@@ -245,11 +266,15 @@ def main(argv=None):
 
             setup.run_steps(test.get("teardown", []), ctx, warn_only=True)
 
-    # Global cleanup (after all suites).
-    cleanup_all = (doc.get("cleanup") or {}).get("all")
+    # Global cleanup (after all suites). `cleanup.db_ref` targets one alternate
+    # database; a multi-service run that seeds rows in both needs a `teardown:` step
+    # per database instead — cleanup.all is a single statement by design.
+    cleanup_cfg = doc.get("cleanup") or {}
+    cleanup_all = cleanup_cfg.get("all")
     if cleanup_all and not args.dry_run:
         try:
-            sql.run_sql(vs.expand(cleanup_all), db_name, args.scripts_dir)
+            sql.run_sql(vs.expand(cleanup_all),
+                        sql.resolve_db(cleanup_cfg, db_name, dbs), args.scripts_dir)
             print(f"\n{BOLD}cleanup:{RESET} ran global cleanup")
         except Exception as e:
             print(f"\n{YELLOW}cleanup warning: {e}{RESET}")

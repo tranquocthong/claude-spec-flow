@@ -247,7 +247,7 @@ Open the relevant file when you hit the topic — don't preload.
 | `scripts/warm-up.sh` | Health probes + DB list + endpoint discovery (branches by stack) |
 | `scripts/state.sh` (sourceable) | Session cache library: `state_set`/`state_get`/`jwt_get`/`jwt_set`. Used by `api.sh` + `test-user.sh`. |
 | `scripts/db-creds.sh [--print] [project-root]` | Discover PG + Redis creds from `.env` + `application.yml`. `eval $(...)` exports `PG_HOST PG_PORT PG_DB PG_USER PG_PASS REDIS_HOST REDIS_PORT REDIS_PASS`. |
-| `scripts/db-query.sh "<sql>" [-d DB] [-f FILE] [-t] [-r root]` | 1-shot psql with auto-discovered creds. Use for seed / verify / inspect. |
+| `scripts/db-query.sh "<sql>" [-d DB] [--host H] [--port P] [--user U] [--password W] [-f FILE] [-t] [-r root]` | 1-shot psql with auto-discovered creds; each `--` flag overrides one discovered field (multi-service). Use for seed / verify / inspect. |
 | `scripts/decode-jwt.sh "$JWT"` | Print JWT payload (handles macOS base64 padding) |
 | `scripts/kc-ropc.sh <realm> <client> <user> <pass> [secret] [token-url]` | Fetch Bearer JWT from Keycloak or any OIDC IDP |
 | `scripts/produce-event.sh <topic> <payload-file\|-> [-k KEY] [-H name=val] [-b BROKER]` | Produce Kafka event (kcat or docker fallback) |
