@@ -56,14 +56,25 @@ If impact spans multiple nodes, or you're unsure, run the full steps below.
    ```
    Returns `{ impacted: { fr, tc, errors, tasks }, reasons }`. Use `--keywords "<term>"` for concept-based impact.
 
-   > **Scope reduction on an implemented feature:** If this change *removes* behavior AND `STATE.md` shows the feature is already implemented/verified, then `impacted.tasks = []` does NOT mean no code changes are needed. The removed behavior may exist in code even without its own TM task (written as part of a broader task). Before concluding no code work is needed: confirm the removed nodes have no corresponding code. If code exists → add a cleanup task in Step 4 (`add_task`) before closing.
+   > **Scope reduction on an implemented feature:** If this change *removes* behavior AND `STATE.md` shows the feature is already implemented/verified, then `impacted.tasks = []` does NOT mean no code changes are needed. The removed behavior may exist in code even without its own TM task (written as part of a broader task). Before concluding no code work is needed: confirm the removed nodes have no corresponding code. If code exists → add a cleanup task in Step 4 (`task-add`) before closing.
 
 4. **Re-route impacted tasks**
    **Per-feature tag:** every TM op here operates on the changed feature's tag — pass `tag: "<feature>"` (MCP) / `--tag <feature>` (CLI) so you re-open *this* feature's tasks, not another's. For each task ID in `impacted.tasks`:
    ```
    mcp__task-master-ai__set_task_status --id=<id> --status=review   # tag: "<feature>"
    ```
-   Add new tasks (`mcp__task-master-ai__add_task`, `tag: "<feature>"`) for net-new work not covered by existing tasks.
+   Add new tasks for net-new work not covered by existing tasks (`mcp__task-master-ai__add_task`, `tag: "<feature>"`).
+
+   > **Never block on a missing MCP tool.** These are state ops — every one has a deterministic engine-CLI twin that writes the
+   > same `.taskmaster/tasks/tasks.json` with no AI and no MCP. Use it whenever the MCP tool is absent (a project `.mcp.json` can
+   > shadow the bundled server with a core-tier `task-master-ai`, which exposes no `add_task`) or errors on a missing API key:
+   > ```bash
+   > node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs task-add --tag <feature> --title "<title>" \
+   >   [--description "<d>"] [--details "<d>"] [--priority high|medium|low]
+   > node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs task-set-status --tag <feature> --id <id> --status review
+   > ```
+   > These live in `flow-tools.cjs`, **not** in `bin/task-master` (that CLI carries only the AI ops + `use-tag`/`init`/`models`/`tasks-import`).
+   > Full op→CLI mapping: see the Task Master note in `/sf:phase`. Do **not** hand the task back to the user as "tooling unavailable".
 
 5. **Re-implement**
    Run `/sf:phase` over the `review` tasks:

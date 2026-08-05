@@ -312,7 +312,12 @@ New features (post-adoption) get the full flow from day one. **Adopt forward, no
 | `epic-list` | list `.spec-flow/epics/*.md` with `{ id, name, status, subCount }` |
 | `verify-code [--feature <f>] [--repos "a,b"]` | **generic quality gate**: run tests, check coverage threshold, scan for forbidden patterns + secrets — driven by `.spec-flow/config.json → verify`; skips gracefully when unconfigured. **Multi-repo:** `--feature`/`--repos` scopes the scan to the repos that feature touched (from `file-links.json`) so an unrelated repo's red WIP can't poison the gate |
 | `status-report [--feature <f>]` | pure-read status aggregate: project, branch, feature, SD, tasks, trace, ready-set, verification, open bugs/changes, latest snapshot + a deterministic `nextStep` — the data source behind `/sf:status` |
-| `doctor [--sd <SD.md>] [--feature <f>]` | **health check**: env · plugin files · install state · project init · trace health · SD gate · tasks info |
+| `doctor [--sd <SD.md>] [--feature <f>]` | **health check**: env · plugin files · install state · project init · trace health · SD gate · tasks info · task-engine MCP binding (warns when a project `.mcp.json` shadows the bundled native server) |
+| `task-add --title <t> [--tag <tag>] [--description <d>] [--details <d>] [--priority high\|medium\|low]` | create a task in the tag (id auto-assigned); the deterministic twin of MCP `add_task` — use it when a project `.mcp.json` shadows the bundled server with a core-tier `task-master-ai` that has no `add_task`. Omitted `--tag` falls back to `.taskmaster/state.json → currentTag` |
+| `task-get --tag <tag> --id <id>` | read one task (twin of MCP `get_task`); returns `data:null` when not found, never an error |
+| `task-list --tag <tag> [--status <s>]` | list a tag's tasks + stats (twin of MCP `get_tasks`) |
+| `task-set-status --tag <tag> --id <id> --status <s>` | set a task/subtask status (twin of MCP `set_task_status`) |
+| `task-next [--tag <tag>]` | next actionable pending task, deps all `done` (twin of MCP `next_task`) |
 | `task-use-tag --tag <tagName>` | set the current tag in `.taskmaster/state.json`; auto-creates the tag namespace `{tasks:[],metadata:{}}` in `tasks.json` when absent — ops that omit `--tag` fall back to this tag (FR-002, FR-003) |
 | `task-add-dep --task-id <id> --dep-id <depId> --tag <tag>` | add `depId` to `taskId.dependencies[]` with full validation: tag exists, depId exists in tag, no cycle (iterative DFS); no-op if already present (FR-005..FR-007) |
 | `task-remove-dep --task-id <id> --dep-id <depId> --tag <tag>` | remove `depId` from `taskId.dependencies[]`; no-op if absent, no error (FR-008) |

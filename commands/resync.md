@@ -57,6 +57,12 @@ Input: `$ARGUMENTS` (new SRS file path). Change only what changed — the tracea
    mcp__task-master-ai__set_task_status --id=<id> --status=review     # for each impacted `done` task
    mcp__task-master-ai__set_task_status --id=<id> --status=pending    # for each impacted `in-progress` task (+ warn the user)
    ```
+   Net-new FRs in the CHANGESET with no existing task → create one (`mcp__task-master-ai__add_task`, `tag: "<feature>"`).
+
+   > **MCP tool missing → use the engine CLI, don't stop.** A project-level `.mcp.json` can shadow the bundled server with a
+   > core-tier `task-master-ai` that exposes no `add_task`. Deterministic twins (same tasks.json, no AI):
+   > `node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs task-set-status --tag <feature> --id <id> --status review` ·
+   > `… task-add --tag <feature> --title "<t>"`. Full mapping: the Task Master note in `/sf:phase`.
    Report the impacted set grouped by prior status so nothing implemented-against-old-spec slips through.
 
 7. **Regenerate impacted checklist entries**

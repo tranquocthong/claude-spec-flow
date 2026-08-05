@@ -112,6 +112,45 @@ test('doctor: always returns ok with a checks array (reports, never throws)', ()
   });
 });
 
+// mcp-shadow: a project-level .mcp.json "task-master-ai" entry overrides the plugin's
+// bundled native server. A legacy/core-tier entry there exposes no add_task — doctor must warn.
+test('doctor: warns when a project .mcp.json shadows the bundled task engine with a legacy entry', () => {
+  inTmp(() => {
+    maintenance['init-project']({ stack: 'node' });
+    fs.writeFileSync('.mcp.json', JSON.stringify({
+      mcpServers: {
+        'task-master-ai': {
+          command: 'npx',
+          args: ['-y', 'task-master-ai'],
+          env: { TASK_MASTER_TOOLS: 'core' },
+        },
+      },
+    }));
+    const shadow = maintenance.doctor({}).data.checks.find(c => c.name === 'mcp-shadow');
+    assert.ok(shadow, 'mcp-shadow check must be present');
+    assert.equal(shadow.status, 'warn');
+    assert.match(shadow.detail, /add_task/);
+    assert.match(shadow.fix, /task-add/);
+  });
+});
+
+test('doctor: mcp-shadow is ok when the project .mcp.json binds the native server or has no TM entry', () => {
+  inTmp(() => {
+    maintenance['init-project']({ stack: 'node' });
+
+    fs.writeFileSync('.mcp.json', JSON.stringify({ mcpServers: { other: { command: 'x' } } }));
+    const noEntry = maintenance.doctor({}).data.checks.find(c => c.name === 'mcp-shadow');
+    assert.equal(noEntry.status, 'ok');
+
+    fs.writeFileSync('.mcp.json', JSON.stringify({
+      mcpServers: { 'task-master-ai': { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.js'] } },
+    }));
+    const native = maintenance.doctor({}).data.checks.find(c => c.name === 'mcp-shadow');
+    assert.equal(native.status, 'ok');
+    assert.match(native.detail, /native task engine/);
+  });
+});
+
 // TC-007: fresh project seeds models.taskmaster: {main, research} — no fallback key (FR-009, FR-011)
 test('init-project: seeds models.taskmaster {main,research} on fresh project — no fallback key (TC-007)', () => {
   inTmp(() => {

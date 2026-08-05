@@ -17,8 +17,25 @@ allowed-tools: Read, Write, Edit, Bash, Agent
 > reads `.taskmaster/config.json` fresh and uses the keyless `claude-code` provider:
 > `node ${CLAUDE_PLUGIN_ROOT}/bin/task-master <cmd> …`. The long-running MCP server caches the
 > provider from startup and fails AI ops with a stale `PERPLEXITY_API_KEY`/`ANTHROPIC_API_KEY` error.
-> State ops (`next_task`, `set_task_status`, `get_tasks`, `add_task`) call no provider → keep the
-> `mcp__task-master-ai__*` tools. **Fallback:** if any MCP TM call errors with a missing API key, re-run it as the CLI equivalent.
+> State ops (`next_task`, `set_task_status`, `get_tasks`, `get_task`, `add_task`) call no provider → keep the
+> `mcp__task-master-ai__*` tools.
+>
+> **Fallback — never assume an MCP tool exists.** If a TM MCP call errors with a missing API key, **or the tool is not
+> exposed at all** (a project-level `.mcp.json` can shadow the bundled server with a core-tier `task-master-ai`, which
+> has no `add_task`), re-run it as the deterministic engine CLI — same tasks.json, no AI, no MCP:
+>
+> | MCP state op | Engine CLI equivalent (`node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs …`) |
+> |---|---|
+> | `next_task` | `task-next --tag <feature>` |
+> | `get_tasks` | `task-list --tag <feature> [--status <s>]` |
+> | `get_task` | `task-get --tag <feature> --id <id>` |
+> | `set_task_status` | `task-set-status --tag <feature> --id <id> --status <s>` |
+> | `add_task` | `task-add --tag <feature> --title "<t>" [--description <d>] [--details <d>] [--priority high\|medium\|low]` |
+>
+> These are engine (`flow-tools.cjs`) commands, **not** `bin/task-master` subcommands — `bin/task-master` carries only the
+> AI ops (`parse-prd`, `expand`, `analyze-complexity`, `research`, `update`, `update-task`) plus `use-tag`/`init`/`models`/`tasks-import`.
+> Every flow-tools `task-*` command prints one `{"ok":true,"data":…}` JSON line. Run `/sf:doctor` if the MCP surface looks wrong —
+> it flags a project `.mcp.json` shadowing the bundled native server.
 
 > **Per-feature tag — task isolation.** EVERY TM op in this flow operates on tag `<feature>` (the feature slug): add `--tag <feature>` to CLI ops, `tag: "<feature>"` to MCP ops. This keeps each feature in its own task space, so a prior feature's (or bug/change's) tasks never collide with or block the next — the same per-feature rule as file-links. `parse-prd --tag <feature>` creates the tag; state ops are lenient (a not-yet-seeded tag just returns empty, no error).
 
