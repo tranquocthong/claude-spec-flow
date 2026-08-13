@@ -173,6 +173,86 @@ test('REGRESSION trace-build: §13.2 "Expected" resolved by header on a 6-col ta
   );
 });
 
+test('REGRESSION trace-build: an escaped `\\|` in a cell keeps the trace intact', () => {
+  // Pre-fix bug: splitRow split on every `|`, so an FR whose Requirement names an
+  // enum or a pipe-joined payload gained cells — the FR node stored a truncated
+  // requirement and read its priority out of the next column.
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo',
+    '',
+    '## 5.1 Functional Requirements',
+    '',
+    '| ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Signature over `merchantId\\|orderId\\|amount` | Must Have | BL-01 |',
+    '',
+    '## 13.2 Test Cases',
+    '',
+    '| TC ID | Flow | Test Case | Expected |',
+    '| --- | --- | --- | --- |',
+    '| TC-001 | Sign | status is `pending\\|done` | Pass |',
+    '',
+  ].join('\n'));
+  const r = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'trace-build ok');
+  assert.deepEqual(r.data.warnings || [], [], 'a properly escaped SD produces no shape warning');
+  const trace = JSON.parse(fs.readFileSync(path.join(dir, '.spec-flow', 'trace.json'), 'utf8'));
+  assert.equal(trace.nodes.fr[0].text, 'Signature over `merchantId|orderId|amount`', 'full requirement, real `|`');
+  assert.equal(trace.nodes.fr[0].priority, 'Must Have', 'priority read from its own column');
+  assert.equal(trace.nodes.fr[0].source, 'BL-01');
+  assert.equal(trace.nodes.tc[0].text, 'status is `pending|done`');
+});
+
+test('REGRESSION trace-build: an UNESCAPED `|` warns instead of silently mis-tracing', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo',
+    '',
+    '## 5.1 Functional Requirements',
+    '',
+    '| ID | Requirement | Priority | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | status in pending|done|failed | Must Have | BL-01 |',
+    '',
+  ].join('\n'));
+  const r = run(['trace-build', '--sd', path.join(sdDir, 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(r.ok, true, 'still builds — a warning, never a block');
+  const w = (r.data.warnings || []).join(' ');
+  assert.match(w, /SD §5\.1 FR table/, 'names the table');
+  assert.match(w, /FR-001 \(6 cells\)/, 'names the row and its real cell count');
+  assert.match(w, /unescaped `\|`/, 'names the cause and the fix');
+});
+
+test('REGRESSION route: FR columns resolved by header, shape warning surfaced', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), [
+    '# SD: demo',
+    '',
+    '## 5.1 Functional Requirements',
+    '',
+    '| ID | Requirement | Priority (MoSCoW) | Source |',
+    '| --- | --- | --- | --- |',
+    '| FR-001 | Signature over `merchantId\\|orderId\\|amount` | Must Have | BL-01 |',
+    '| FR-002 | status in pending|done | Should Have | BL-02 |',
+    '',
+  ].join('\n'));
+  const r = run(['route', '--sd', path.join(sdDir, 'SD.md')], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.items[0].requirement, 'Signature over `merchantId|orderId|amount`');
+  assert.equal(r.data.items[0].priority, 'Must Have', 'escaped row: priority from its own column');
+  assert.match((r.data.warnings || []).join(' '), /FR-002 \(5 cells\)/, 'the unescaped row is reported');
+});
+
 test('REGRESSION trace-build: fr-tc links via explicit FR-ref column (6-col TC table)', () => {
   // Pre-fix bug: tcIdsForReq matched tr[2] ("Test Case" description) against fr.text
   // via fuzzy includes — always 0 links on real SDs where descriptions differ.

@@ -28,6 +28,8 @@ Author all **free prose** in that language (e.g. `vi` → Vietnamese): the §1 O
 - **Table column headers** — `| ID | Requirement | Priority | Source |`, `| TC ID | Flow | Test Case | Input / Condition | Expected Result | FR |`, `| ID | Category | Requirement | Target |`. Header *text* stays English; the cell *content* below is localized.
 - **All IDs** (`FR-001`, `TC-001`, `NFR-001`, `ERR_*`), **MoSCoW priority values** (`Must Have` / `Should Have` / `Could Have`), and every **code identifier** (class/DTO/field/method/endpoint/enum name, package path).
 
+**Escape a literal `|` inside a table cell as `\|`.** A raw `|` in cell *content* — an enum spelling (`pending|done`), a payload or hash input joined by `|` — adds a column to that row: the table renders shifted/truncated for the reviewer, and `route` / `checklist-gen` / `trace-build` then read the wrong cells (a truncated Requirement, a priority taken from the neighbouring column). The escape is markdown-only: the value the cell denotes is the plain `|` character (U+007C). So whenever a requirement, test case, or payload genuinely uses `|` as a delimiter, add one line under that table stating it — e.g. `> The delimiter is the plain \`|\` character (U+007C); \`\\|\` above is markdown escaping only.` — because a `\` copy-pasted out of a rendered cell into code is a silent data bug that no test catches.
+
 So a Vietnamese SD reads: English skeleton (headers/IDs/structure) + Vietnamese prose in the cells and narrative. Readable for the team AND machine-parseable.
 
 ## Inputs

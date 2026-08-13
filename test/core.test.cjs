@@ -69,6 +69,70 @@ test('parseAllTables: extracts headers + rows, skips the --- separator', () => {
   assert.deepEqual(tables[0].rows[0], ['1', '2', '3']);
 });
 
+test('splitRow: `\\|` is cell text, not a column separator', () => {
+  // An FR whose Requirement names an enum: the pipes belong to the VALUE. Split on
+  // them and every later column shifts — route() read the priority out of the
+  // Source cell and trace-build stored a truncated requirement.
+  const row = '| FR-002 | status must be one of `pending\\|done\\|failed` | Must Have | BL-03 |';
+  assert.deepEqual(core.splitRow(row), [
+    'FR-002',
+    'status must be one of `pending|done|failed`',
+    'Must Have',
+    'BL-03',
+  ], 'four cells, and the real `|` (U+007C) is restored — never the backslash');
+
+  // Unescaped pipes still separate (a hand-written SD stays parseable, just wrong-shaped).
+  assert.equal(core.splitRow('| a | b|c | d |').length, 4);
+  // Escape at the very end of the last cell: the trailing `|` is still the row terminator.
+  assert.deepEqual(core.splitRow('| a | ends with \\| |'), ['a', 'ends with |']);
+});
+
+test('mdCell → splitRow round-trips a pipe-bearing value losslessly', () => {
+  const payload = 'sha256(merchantId|orderId|amount)';
+  const cell = core.mdCell(payload);
+  assert.equal(cell, 'sha256(merchantId\\|orderId\\|amount)', 'escaped on write');
+  assert.deepEqual(core.splitRow(`| FR-001 | ${cell} | Must Have | BL-01 |`)[1], payload, 'unescaped on read');
+  // Already-escaped input must not double-escape (an SRS author may write `\|` themselves;
+  // splitRow hands us the plain value, so a re-render stays stable).
+  assert.equal(core.mdCell(core.splitRow(`| ${cell} |`)[0]), cell);
+  // Newlines would break the row entirely.
+  assert.equal(core.mdCell('two\nlines'), 'two lines');
+  assert.equal(core.mdCell(null), '');
+});
+
+test('resolveCols: header names win over position, fallback when absent', () => {
+  // 6-col enriched §13.2 — position 3 is Input / Condition, NOT Expected.
+  const rich = { headers: ['TC ID', 'Flow', 'Test Case', 'Input / Condition', 'Expected Result', 'FR'], rows: [] };
+  const c = core.resolveCols(rich, { id: [/tc\s*id/i, 0], text: [/test\s*case/i, 2], expected: [/expected/i, 3] });
+  assert.equal(c.expected, 4);
+  // 4-col skeleton — the same spec falls back to its positional index.
+  const skeleton = { headers: ['TC ID', 'Flow', 'Test Case', 'Expected'], rows: [] };
+  assert.equal(core.resolveCols(skeleton, { expected: [/expected/i, 3] }).expected, 3);
+  // Reordered columns resolve by name.
+  const swapped = { headers: ['Requirement', 'ID', 'Priority (MoSCoW)', 'Source'], rows: [] };
+  const s = core.resolveCols(swapped, { id: [/\bid\b/i, 0], text: [/requirement/i, 1], priority: [/priority|moscow/i, 2] });
+  assert.deepEqual([s.id, s.text, s.priority], [1, 0, 2]);
+  // No headers at all → pure fallback, never -1 (which would read undefined cells).
+  assert.deepEqual(core.resolveCols(null, { a: [/nope/i, 0], b: [/nah/i, 1] }), { a: 0, b: 1 });
+});
+
+test('tableShapeWarnings: flags rows that lost the header column count', () => {
+  const table = {
+    headers: ['ID', 'Requirement', 'Priority', 'Source'],
+    rows: [
+      ['FR-001', 'fine', 'Must Have', 'BL-01'],
+      ['FR-002', 'status in pending', 'done', 'failed', 'Must Have', 'BL-02'], // unescaped `|`
+    ],
+  };
+  const w = core.tableShapeWarnings(table, 'SD §5.1 FR table');
+  assert.equal(w.length, 1);
+  assert.match(w[0], /SD §5\.1 FR table/);
+  assert.match(w[0], /FR-002 \(6 cells\)/, 'names the offending row and its actual cell count');
+  assert.match(w[0], /unescaped/, 'says what to fix');
+  assert.deepEqual(core.tableShapeWarnings({ headers: ['A'], rows: [['x']] }, 'ok'), [], 'well-formed → silent');
+  assert.deepEqual(core.tableShapeWarnings(null, 'absent'), [], 'absent table → silent');
+});
+
 test('tcIdsForReq: explicit FR-ref column wins over fuzzy text', () => {
   const tc = {
     headers: ['TC ID', 'Flow', 'Test Case', 'Expected', 'FR'],
@@ -144,6 +208,36 @@ test('genSd: harvests an ID-prefixed FR table into §5.1 (#2)', () => {
   assert.equal(stats.fr, 2, 'two FRs harvested by ID-prefix');
   assert.match(sd, /publish after commit/);
   assert.match(sd, /\| FR-001 \|/, 'renumbered to canonical FR-001');
+});
+
+test('genSd: a `|` harvested from the SRS is escaped, so the row keeps 4 columns', () => {
+  // The SRS legitimately uses `|` as a delimiter. Interpolated raw it added a column:
+  // §5.1 rendered shifted AND route/trace-build read the wrong cells.
+  // The SRS is itself a well-formed markdown table: it escapes its own pipes. So the
+  // value round-trips SRS → splitRow (unescape) → genSd (re-escape) with no loss and
+  // no double-escaping.
+  const srs = core.parseSrs([
+    '# Feature: Signature',
+    '',
+    '## 5. Chuc nang',
+    '',
+    '| Ma | Muc do | Mo ta |',
+    '| --- | --- | --- |',
+    '| FR-1 | MUST | payload = merchantId\\|orderId\\|amount, then sha256 |',
+    '',
+  ].join('\n'));
+  const { sd } = core.genSd(srs, { feature: 'signature' });
+  const frRow = sd.split('\n').find((l) => l.startsWith('| FR-001 |'));
+  assert.ok(frRow, '§5.1 has an FR-001 row');
+  assert.match(frRow, /merchantId\\\|orderId\\\|amount/, 'pipes escaped in the cell');
+  assert.equal(core.splitRow(frRow).length, 4, 'row still has exactly 4 cells');
+  assert.match(core.splitRow(frRow)[1], /merchantId\|orderId\|amount/, 'parsed value is the plain `|`');
+  assert.deepEqual(core.tableShapeWarnings(
+    core.parseAllTables(sd.split('\n')).find((t) => /requirement/i.test(t.headers.join(' '))),
+    '§5.1',
+  ), [], 'the generated §5.1 is shape-clean');
+  // And the SD tells the implementer not to copy the backslash into code.
+  assert.match(sd, /U\+007C/, '§5.1 carries the escaping note');
 });
 
 test('genSd: free-form SRS with nothing parseable → TODO placeholders', () => {

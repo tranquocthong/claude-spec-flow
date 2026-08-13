@@ -461,7 +461,7 @@ See [DEPENDENCIES.md](DEPENDENCIES.md) for the full lock policy.
 
 ## Status & known limits
 
-- Engine (28 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 88 engine tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites) + 44 checklist-runner tests (`python3 -m unittest checklist_lib.tests.test_checklist_lib`, from `skills/manual-test/scripts/`).
+- Engine (28 `flow-tools` cmds, modular: `bin/flow-tools.cjs` + `lib/core.cjs` + `lib/maintenance.cjs`) + hooks + commands + agents: **built & verified** by 790 engine tests (`node --test test/*.test.cjs` — CLI integration + per-lib unit suites) + 65 checklist-runner tests (`python3 -m unittest checklist_lib.tests.test_checklist_lib`, from `skills/manual-test/scripts/`).
 - **Contributing / dev setup:** the engine LOC ceiling (charter §0b #8, now **per file**) is enforced by a pre-commit hook in `.githooks/`. After cloning, activate it once: `git config core.hooksPath .githooks` (git does not run committed hooks without this).
 - **In active dogfooding** — used on real projects; fixes ship straight from live-use feedback (recent: per-feature durable trace, multi-repo verify-code scoping, design-type-aware checklist-gen, ID-prefix SRS harvest for non-English specs). Not yet a confident team-wide release.
 - SRS harvest is intentionally dirty; `sd-author` (AI) cleans it — don't judge the harvest output directly.

@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, countSdTodos, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
+  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, resolveCols, tableShapeWarnings, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, countSdTodos, mdCell, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
 } = require('../lib/core.cjs');
 const maintenance = require('../lib/maintenance.cjs');
 const drift = require('../lib/drift.cjs');
@@ -28,6 +28,20 @@ const tagManager = require('../lib/tag-manager.cjs');
 const dependencyManager = require('../lib/dependency-manager.cjs');
 const subtaskManager = require('../lib/subtask-manager.cjs');
 const { expandHook } = require('../lib/expand-hook.cjs');
+
+// Column specs for the SD tables the deterministic commands read. Resolved BY
+// HEADER NAME (core.resolveCols) with the canonical Pass-1 position as fallback —
+// so an SD that carries an extra column, reorders two, or was hand-written by a
+// human still reads correctly. `route` and `trace-build` share the FR spec: they
+// must agree on which cell is the Requirement, or a routed FR and its trace node
+// describe different things.
+const SD_COLS = {
+  fr: { id: [/\bid\b/i, 0], text: [/requirement|description/i, 1], priority: [/priority|moscow/i, 2], source: [/source/i, 3] },
+  tc: { id: [/tc\s*id|\bid\b/i, 0], flow: [/flow/i, 1], text: [/test\s*case|scenario/i, 2] },
+  err: { code: [/error\s*code|\bcode\b/i, 0], http: [/http/i, 1], trigger: [/trigger|condition/i, 2] },
+  state: { name: [/state/i, 0], meaning: [/meaning|description/i, 1] },
+  nfr: { id: [/\bid\b/i, 0], category: [/category/i, 1], text: [/requirement|description/i, 2], target: [/target|acceptance/i, 3] },
+};
 
 // =====================================================================
 //  COMMANDS (workflow). Static commands live in lib/maintenance.cjs;
@@ -82,16 +96,20 @@ const commands = {
     if (!fs.existsSync(sd)) return err(`NOT_FOUND: ${sd}`);
     const { fr } = readSdTables(sd);
     if (!fr) return err('NO_FR_TABLE: SD §5.1 Functional Requirements not found');
+    const c = resolveCols(fr, SD_COLS.fr);
     const items = fr.rows.map(r => {
-      const [id, req, prio, src] = r;
+      const req = r[c.text];
       const score = scoreComplexity(req || '');
-      return { id, requirement: req, priority: prio, source: src, score, route: routeFor(score) };
+      return { id: r[c.id], requirement: req, priority: r[c.priority], source: r[c.source], score, route: routeFor(score) };
     });
     const summary = items.reduce((a, it) => { a[it.route] = (a[it.route] || 0) + 1; return a; }, {});
+    // A shape-broken §5.1 routes on a truncated Requirement and reads the priority
+    // from the wrong cell, so say so rather than returning a confident wrong route.
+    const shape = tableShapeWarnings(fr, 'SD §5.1 FR table');
     // Transparent: an FR table that parsed to zero rows is a real signal (empty/malformed
     // §5.1), not a successful "nothing to route" — say so rather than a silent count:0.
-    if (!items.length) return ok({ count: 0, summary: {}, items: [], note: 'FR table found but parsed 0 rows — check SD §5.1 formatting.' });
-    return ok({ count: items.length, summary, items });
+    if (!items.length) return ok({ count: 0, summary: {}, items: [], note: 'FR table found but parsed 0 rows — check SD §5.1 formatting.', warnings: shape });
+    return ok({ count: items.length, summary, items, warnings: shape });
   },
 
   // SD §13.2 Test Cases -> manual-test CHECKLIST.yaml scaffold (TODO markers gate on lint).
@@ -462,35 +480,52 @@ const commands = {
       (/category/i.test(t.headers.join(' ')) && /target|acceptance/i.test(t.headers.join(' ')) && !/priority|moscow/i.test(t.headers.join(' ')))
     );
 
-    // Build FR nodes
+    // Build FR nodes (columns by header name — see SD_COLS)
+    const frCols = resolveCols(frTable, SD_COLS.fr);
     const frNodes = frTable ? frTable.rows.map(r => ({
-      id: (r[0] || '').trim(),
-      text: (r[1] || '').trim(),
-      priority: (r[2] || '').trim(),
-      source: (r[3] || '').trim(),
+      id: (r[frCols.id] || '').trim(),
+      text: (r[frCols.text] || '').trim(),
+      priority: (r[frCols.priority] || '').trim(),
+      source: (r[frCols.source] || '').trim(),
     })).filter(n => n.id) : [];
 
-    // Build TC nodes (resolve "Expected" column by header — 6-col enriched vs 4-col skeleton)
-    const tcH = (tcTable && tcTable.headers ? tcTable.headers : []).map(h => String(h || '').toLowerCase());
-    const tcExpIdx = (() => { const i = tcH.findIndex(h => /expected/.test(h)); return i >= 0 ? i : (tcH.length >= 5 ? 4 : 3); })();
+    // Build TC nodes. "Expected" keeps its length-aware fallback: the 6-col enriched
+    // §13.2 puts it at index 4, the 4-col Pass-1 skeleton at index 3.
+    const tcH = (tcTable && tcTable.headers ? tcTable.headers : []);
+    const tcCols = resolveCols(tcTable, { ...SD_COLS.tc, expected: [/expected/i, tcH.length >= 5 ? 4 : 3] });
     const tcNodes = tcTable ? tcTable.rows.map(r => ({
-      id: (r[0] || '').trim(),
-      flow: (r[1] || '').trim(),
-      text: (r[2] || '').trim(),
-      expected: (r[tcExpIdx] || '').trim(),
+      id: (r[tcCols.id] || '').trim(),
+      flow: (r[tcCols.flow] || '').trim(),
+      text: (r[tcCols.text] || '').trim(),
+      expected: (r[tcCols.expected] || '').trim(),
     })).filter(n => n.id) : [];
 
     // Build error nodes
+    const errCols = resolveCols(errTable, SD_COLS.err);
     const errorNodes = errTable ? errTable.rows.map(r => ({
-      code: (r[0] || '').trim(),
-      http: (r[1] || '').trim(),
-      trigger: (r[2] || '').trim(),
+      code: (r[errCols.code] || '').trim(),
+      http: (r[errCols.http] || '').trim(),
+      trigger: (r[errCols.trigger] || '').trim(),
     })).filter(n => n.code) : [];
 
     // Enforce the project's standard error-code pattern (opt-in: config.conventions
     // .errorCodePattern). WARN (not block) on §12.2 codes that don't match — surfaces
     // a drift from the house convention right at ingest/resync, not at review-by-eye.
     const warnings = [];
+
+    // Table shape: a row that does not have the header's column count is almost always
+    // an unescaped `|` in a cell (an enum spelling, a pipe-joined payload). It renders
+    // as a shifted/truncated row for the reviewer, and the node built from it carries a
+    // cut-short requirement or a value from the neighbouring column — a trace that is
+    // wrong without looking wrong. Warn per table, naming the offending row ids.
+    for (const [label, t] of [
+      ['SD §5.1 FR table', frTable],
+      ['SD §13.2 TC table', tcTable],
+      ['SD §12.2 error table', errTable],
+      ['SD §10.4 state table', stateTable],
+      ['SD §5.2 NFR table', nfrTable],
+    ]) warnings.push(...tableShapeWarnings(t, label));
+
     const ecPattern = ((readJsonSafe(PATHS.config, {}) || {}).conventions || {}).errorCodePattern || null;
     if (ecPattern && errorNodes.length) {
       let ecRe = null;
@@ -502,17 +537,19 @@ const commands = {
     }
 
     // Build state nodes
+    const stateCols = resolveCols(stateTable, SD_COLS.state);
     const stateNodes = stateTable ? stateTable.rows.map(r => ({
-      name: (r[0] || '').trim(),
-      meaning: (r[1] || '').trim(),
+      name: (r[stateCols.name] || '').trim(),
+      meaning: (r[stateCols.meaning] || '').trim(),
     })).filter(n => n.name) : [];
 
     // Build NFR nodes (§5.2)
+    const nfrCols = resolveCols(nfrTable, SD_COLS.nfr);
     const nfrNodes = nfrTable ? nfrTable.rows.map(r => ({
-      id: (r[0] || '').trim(),
-      category: (r[1] || '').trim(),
-      text: (r[2] || '').trim(),
-      target: (r[3] || '').trim(),
+      id: (r[nfrCols.id] || '').trim(),
+      category: (r[nfrCols.category] || '').trim(),
+      text: (r[nfrCols.text] || '').trim(),
+      target: (r[nfrCols.target] || '').trim(),
     })).filter(n => /^NFR/i.test(n.id)) : [];
 
     // Load tasks: explicit path, or infer relative to SD

@@ -181,6 +181,8 @@
 
 ### 5.1 Functional Requirements
 
+> **Table cells:** escape a literal `|` inside a cell as `\|` (markdown only — it keeps the row's column count so `route` / `trace-build` read the right cells). The value it denotes is the plain `|` character (U+007C): write `|`, never `\|`, in code, config, or payloads.
+
 | ID     | Requirement                                              | Priority        |
 |--------|----------------------------------------------------------|-----------------|
 | FR-001 | [Mô tả yêu cầu chức năng 1]                              | Must Have       |
