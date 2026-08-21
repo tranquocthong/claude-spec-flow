@@ -465,6 +465,81 @@ test('(i) parse-prd with non-existent --input file: exits 1 before routing', asy
   assert.equal(captured.length, 0, 'no spec must be emitted when file cannot be read');
 });
 
+// ---------------------------------------------------------------------------
+// (j) SD approval gate: parse-prd refuses an SD with unresolved TODO:MANUAL-REVIEW
+// markers unless --force is passed (backlog-parse-prd-approval-gate).
+// ---------------------------------------------------------------------------
+
+test('(j) parse-prd on an unapproved SD: exits 1 with SD_NOT_APPROVED before routing', async () => {
+  const tmpDir = makeTmpDir();
+  const _paths = makePaths(tmpDir);
+  const _configFile = makeConfigFile(tmpDir, 'native');
+
+  const inputFile = path.join(tmpDir, 'SD.md');
+  fs.writeFileSync(
+    inputFile,
+    '# Solution Design: Feature\n\n> **TODO:MANUAL-REVIEW** — fill in §5.1 _(Pass-2 / sd-author agent or human)_\n',
+    'utf8'
+  );
+
+  const captured = [];
+  const result = await runCli(
+    ['parse-prd', '--input', inputFile, '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: { CLAUDECODE: '1' }, _stdout: (s) => captured.push(s) } }
+  );
+
+  assert.equal(result.exitCode, 1, 'unapproved SD must exit 1');
+  assert.ok(
+    result.stderr.includes('SD_NOT_APPROVED'),
+    `stderr must contain SD_NOT_APPROVED; got: ${result.stderr}`
+  );
+  assert.equal(captured.length, 0, 'no spec must be emitted when the SD is not approved');
+});
+
+test('(j) parse-prd on an unapproved SD with --force: bypasses the gate and proceeds to routing', async () => {
+  const tmpDir = makeTmpDir();
+  const _paths = makePaths(tmpDir);
+  const _configFile = makeConfigFile(tmpDir, 'native');
+
+  const inputFile = path.join(tmpDir, 'SD.md');
+  fs.writeFileSync(
+    inputFile,
+    '# Solution Design: Feature\n\n> **TODO:MANUAL-REVIEW** — fill in §5.1 _(Pass-2 / sd-author agent or human)_\n',
+    'utf8'
+  );
+
+  const captured = [];
+  const result = await runCli(
+    ['parse-prd', '--input', inputFile, '--tag', 'feat-x', '--force'],
+    { _configFile, _paths, _inject: { _env: { CLAUDECODE: '1' }, _stdout: (s) => captured.push(s) } }
+  );
+
+  assert.equal(result.exitCode, 0, '--force must bypass the gate and let parse-prd proceed');
+  assert.equal(captured.length, 1, 'AIRouter must write the spec to _stdout exactly once');
+});
+
+test('(j) parse-prd on an approved SD (0 TODO markers): proceeds without --force', async () => {
+  const tmpDir = makeTmpDir();
+  const _paths = makePaths(tmpDir);
+  const _configFile = makeConfigFile(tmpDir, 'native');
+
+  const inputFile = path.join(tmpDir, 'SD.md');
+  fs.writeFileSync(
+    inputFile,
+    '# Solution Design: Feature\n\nTODO:MANUAL-REVIEW remaining: 0\n',
+    'utf8'
+  );
+
+  const captured = [];
+  const result = await runCli(
+    ['parse-prd', '--input', inputFile, '--tag', 'feat-x'],
+    { _configFile, _paths, _inject: { _env: { CLAUDECODE: '1' }, _stdout: (s) => captured.push(s) } }
+  );
+
+  assert.equal(result.exitCode, 0, 'an approved SD (0 anchored markers) must not be gated');
+  assert.equal(captured.length, 1, 'AIRouter must write the spec to _stdout exactly once');
+});
+
 test('(i) expand with host present: spec emitted with correct parentTaskId and existingSubtaskIds', async () => {
   const tmpDir = makeTmpDir();
   const _paths = makePaths(tmpDir);

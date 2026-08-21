@@ -2,6 +2,14 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.8.3] — 2026-08-21
+
+**A dogfooding finding from two parallel worktrees on the same feature.** Two SDs of one epic (`wcm-vm-p10`, `wcm-vm-p11`) were being implemented in separate git worktrees at once. One suspected bug turned out not to be one; the other was real.
+
+- **Ruled out: shared `.taskmaster/state.json` across worktrees.** `/sf:status` in the P10 worktree started reporting P11's `currentTag`. Audited every read/write of `.taskmaster/state.json`, `tasks.json`, and `.spec-flow/STATE.md` in `task-core.cjs` and `flow-tools.cjs`: all of them resolve strictly off `process.cwd()`, with no upward directory search and no `git rev-parse --git-common-dir` shortcut that would collapse two worktrees onto one root. Two genuinely separate `git worktree` directories cannot cross-write through this code — the symptom is environmental (most likely a long-lived MCP `task-master-ai` server whose cwd was pinned at spawn and did not follow a later worktree switch), not a spec-flow defect. No code change; noted here so the investigation isn't repeated.
+- **Real bug: `parse-prd` had no code-level SD-approval gate.** `commands/ingest.md` STEP 8 tells the agent "refuse to call `parse_prd` while any `TODO:MANUAL-REVIEW` remains ... STOP and hand back to the human" — but that was prose only. `lib/maintenance.cjs`'s `sd-gate` doctor check only ever `warn`s, and `_handleParsePrd` had zero check against the SD's TODO markers or an approval flag. The P11 SD, not yet approved and missing its last four changes, still got `parse-prd`'d into 13 seeded tasks in the other worktree, because nothing in the tool stopped the call. `_handleParsePrd` now counts `TODO:MANUAL-REVIEW` markers in the `--input` file via the existing `core.countSdTodos()` and refuses with `SD_NOT_APPROVED` unless `--force` is passed — same override convention `sd-skeleton`/`checklist-gen` already use.
+- 793 Node tests green (3 new).
+
 ## [0.8.2] — 2026-08-13
 
 **A `|` inside an SD table cell silently corrupted the trace built from it.** Found reviewing an SD whose §5.1 describes a signature payload joined by `|` and whose §12.2 trigger names a status enum — both perfectly ordinary things for a requirement to say, and both unreadable to the engine.
