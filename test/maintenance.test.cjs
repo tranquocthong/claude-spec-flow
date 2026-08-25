@@ -190,3 +190,69 @@ test('init-project: leaves models.taskmaster untouched when already present with
     assert.deepEqual(cfg.models.taskmaster, { main: 'opus', research: 'sonnet' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// doctor / current-tag drift (W3)
+//
+// Regression guard for the false-GREEN that shipped with the original heuristic:
+// it never opened .taskmaster/state.json, it only inspected the tasks.json key
+// list. A feature that had not been through parse-prd yet owns no tag, so the
+// check fell through to its `else` and reported "TM tag aligned" while the real
+// currentTag still pointed at a prior feature — precisely the ingest→phase
+// window where doctor is run most.
+// ---------------------------------------------------------------------------
+
+/** Seed an active feature (.spec-flow/trace.json) + a TM state.json currentTag. */
+function seedTagState(activeFeature, currentTag, tagsInTasksJson) {
+  fs.mkdirSync('.spec-flow', { recursive: true });
+  fs.writeFileSync('.spec-flow/trace.json', JSON.stringify({ feature: activeFeature }));
+  fs.mkdirSync('.taskmaster/tasks', { recursive: true });
+  if (currentTag !== null) {
+    fs.writeFileSync('.taskmaster/state.json', JSON.stringify({ currentTag }));
+  }
+  const tasks = {};
+  for (const t of (tagsInTasksJson || [])) tasks[t] = { tasks: [], metadata: {} };
+  fs.writeFileSync('.taskmaster/tasks/tasks.json', JSON.stringify(tasks));
+}
+
+const currentTagCheck = () => maintenance.doctor({}).data.checks.find(c => c.name === 'current-tag');
+
+test('doctor: warns on currentTag drift even when the active feature has no tag yet (pre-parse-prd)', () => {
+  inTmp(() => {
+    // ekyc is ingested (SD + trace) but not yet seeded, so tasks.json holds only
+    // the prior feature's tag. The old heuristic reported ok here.
+    seedTagState('user-re-ekyc-bo-history', 'wcm-vm-p11-face-verify', ['wcm-vm-p11-face-verify']);
+    const c = currentTagCheck();
+    assert.equal(c.status, 'warn');
+    assert.match(c.detail, /wcm-vm-p11-face-verify/);
+    assert.match(c.detail, /user-re-ekyc-bo-history/);
+    assert.match(c.fix, /use-tag user-re-ekyc-bo-history/);
+  });
+});
+
+test('doctor: current-tag is ok when currentTag matches the active feature, even with other tags present', () => {
+  inTmp(() => {
+    // The old heuristic warned here purely because a second tag existed.
+    seedTagState('feat-a', 'feat-a', ['master', 'feat-a', 'feat-b']);
+    const c = currentTagCheck();
+    assert.equal(c.status, 'ok');
+    assert.equal(c.fix, null);
+  });
+});
+
+test('doctor: warns when .taskmaster/state.json has no currentTag set', () => {
+  inTmp(() => {
+    seedTagState('feat-a', null, ['feat-a']);
+    const c = currentTagCheck();
+    assert.equal(c.status, 'warn');
+    assert.match(c.detail, /no currentTag set/);
+  });
+});
+
+test('doctor: current-tag check is skipped entirely when the project has no .taskmaster/', () => {
+  inTmp(() => {
+    fs.mkdirSync('.spec-flow', { recursive: true });
+    fs.writeFileSync('.spec-flow/trace.json', JSON.stringify({ feature: 'feat-a' }));
+    assert.equal(currentTagCheck(), undefined);
+  });
+});

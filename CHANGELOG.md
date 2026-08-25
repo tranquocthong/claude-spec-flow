@@ -2,6 +2,14 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.8.4] — 2026-08-25
+
+**The `/sf:doctor` check written to catch `currentTag` drift never read `currentTag`.** Surfaced by a peer agent that found its own project sitting at `currentTag=wcm-vm-p11-face-verify-cert-pay-v2` while `.spec-flow/STATE.md` pointed at `user-re-ekyc-bo-history`, asked whether doctor should warn about that, and was told it already did. It does not.
+
+- **`current-tag` (W3) guessed from the `tasks.json` key list instead of opening `.taskmaster/state.json`.** The check's own comment admitted the shortcut — *"currentTag is stored in TM state, not tasks.json; best-effort"* — and its logic was `tags.includes(activeFeature) && tags.length > 1 → warn, else → ok`. Two failures fall out of that. It **warned whenever a second tag merely existed**, even with `currentTag` already correct, which is noise. Worse, it reported **`ok` "TM tag aligned" for any feature not yet through `parse-prd`**: an unseeded feature owns no tag, so `tags.includes(activeFeature)` is false and the check fell through to its `else`. That is the entire `/sf:ingest` → `/sf:phase` window — the stretch where the SD exists, no tasks do, and doctor is run most — reporting green on a genuinely drifted pointer. A false green is worse than the silence it replaced: 0.8.1 shipped `mcp-shadow` for exactly this failure mode one release earlier, and this check had the same shape. It now calls `task-core._getCurrentTag()` (already written, already exported, previously unused here) and compares the real value: absent → warn, mismatched → warn naming both sides, equal → ok. The `tags.length` heuristic is gone.
+- Why it matters beyond a tidier report: `commands/phase.md` writes **CRITICAL** over this exact hazard, because Task Master MCP state ops bind to the global `currentTag` and may ignore a per-call `tag:` param — so a stale pointer makes `set_task_status` / `update-subtask` land on another feature's tag **silently**, with no error. Note the blast radius stops there: `status-report` reads the active feature from `.spec-flow/trace.json` and `checklist-gen` derives it from the SD path, so `/sf:status` and `/sf:checklist` were never affected. Only the TM side reads `currentTag`.
+- 797 Node tests green (4 new, covering the pre-`parse-prd` false green, the multi-tag false positive, an unset `currentTag`, and a project with no `.taskmaster/` where the check is skipped entirely).
+
 ## [0.8.3] — 2026-08-21
 
 **A dogfooding finding from two parallel worktrees on the same feature.** Two SDs of one epic (`wcm-vm-p10`, `wcm-vm-p11`) were being implemented in separate git worktrees at once. One suspected bug turned out not to be one; the other was real.
