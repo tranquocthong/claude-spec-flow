@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sd-drift-detect.sh — PreToolUse(Edit|Write) hook. SD-mismatch defense, layer 2.
-# Checks whether a file being edited appears in trace.json task-file/fr-file links.
+# Checks whether a file being edited appears in any per-feature trace's task-file/fr-file links.
 # When found: warns if the linked FR has no TC (real drift signal) OR if the linked
 # task is in review/blocked status. Silent when the file is not in trace at all.
 #
@@ -8,13 +8,13 @@
 
 # Resolve plugin root: prefer env var, fallback to script's own directory.
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-TRACE_FILE=".spec-flow/trace.json"
+STATE_DIR=".spec-flow"
 
 # --- Read stdin (the PreToolUse event JSON) ----------------------------------
 input="$(cat 2>/dev/null || true)"
 
-# --- No trace.json yet → nothing to check -----------------------------------
-if [[ ! -f "$TRACE_FILE" ]]; then
+# --- No .spec-flow yet → nothing to check ------------------------------------
+if [[ ! -d "$STATE_DIR" ]]; then
   exit 0
 fi
 
@@ -62,26 +62,55 @@ function normPath(p) {
 
 var normFp = normPath(fp);
 
-var traceRaw;
-try { traceRaw = fs.readFileSync('.spec-flow/trace.json', 'utf8'); } catch(e) { process.exit(0); }
-var trace;
-try { trace = JSON.parse(traceRaw); } catch(e) { process.exit(0); }
+// Scan EVERY per-feature trace (specs/*/trace.json), not the global mirror. The
+// mirror only ever reflects the last-built feature, so with two features in play
+// this hook silently checked the wrong one — an edit in feature A matched nothing
+// while A's trace sat right there on disk. Matching is by file path, so the union
+// of the durable traces is both correct and mirror-independent. The mirror stays a
+// last-resort fallback for a project built before per-feature traces existed.
+var specsDir = '.spec-flow/specs';
+var traceFiles = [];
+try {
+  fs.readdirSync(specsDir).forEach(function(d) {
+    var f = path.join(specsDir, d, 'trace.json');
+    if (fs.existsSync(f)) traceFiles.push({ feature: d, file: f });
+  });
+} catch(e) {}
+if (traceFiles.length === 0) {
+  if (fs.existsSync('.spec-flow/trace.json')) traceFiles.push({ feature: null, file: '.spec-flow/trace.json' });
+  else process.exit(0);
+}
 
-var links = trace.links || [];
-var nodes = trace.nodes || {};
-var frNodes = nodes.fr || [];
-var taskNodes = nodes.tasks || [];
-
-// Find all task-file and fr-file links that match this file
+// Find all task-file and fr-file links that match this file, across all features.
 var matchedTaskIds = [];
 var matchedFrIds = [];
+var matchedFeatures = [];
+var links = [];
+var frNodes = [];
+var taskNodes = [];
 
-links.forEach(function(lnk) {
-  if (lnk.type !== 'task-file' && lnk.type !== 'fr-file') return;
-  var linkFile = normPath(lnk.to || '');
-  if (linkFile === normFp) {
-    if (lnk.type === 'task-file') matchedTaskIds.push(String(lnk.from));
-    if (lnk.type === 'fr-file')   matchedFrIds.push(String(lnk.from));
+traceFiles.forEach(function(tf) {
+  var trace;
+  try { trace = JSON.parse(fs.readFileSync(tf.file, 'utf8')); } catch(e) { return; }
+  var tLinks = trace.links || [];
+  var tNodes = trace.nodes || {};
+  var hit = false;
+  tLinks.forEach(function(lnk) {
+    if (lnk.type !== 'task-file' && lnk.type !== 'fr-file') return;
+    var linkFile = normPath(lnk.to || '');
+    if (linkFile === normFp) {
+      hit = true;
+      if (lnk.type === 'task-file') matchedTaskIds.push(String(lnk.from));
+      if (lnk.type === 'fr-file')   matchedFrIds.push(String(lnk.from));
+    }
+  });
+  if (hit) {
+    // Only a trace that actually owns this file contributes context, so an
+    // unrelated feature's FR/task ids can never colour the warning.
+    links = links.concat(tLinks);
+    frNodes = frNodes.concat(tNodes.fr || []);
+    taskNodes = taskNodes.concat(tNodes.tasks || []);
+    if (tf.feature) matchedFeatures.push(tf.feature);
   }
 });
 
@@ -112,7 +141,8 @@ matchedTaskIds.forEach(function(taskId) {
 
 if (warnings.length > 0) {
   var allIds = matchedFrIds.concat(matchedTaskIds).join(', ');
-  process.stderr.write('spec-flow: sd-drift-detect: editing ' + fp + ' (linked: ' + allIds + ')\n');
+  var featNote = matchedFeatures.length ? ' [' + matchedFeatures.join(', ') + ']' : '';
+  process.stderr.write('spec-flow: sd-drift-detect: editing ' + fp + featNote + ' (linked: ' + allIds + ')\n');
   warnings.forEach(function(w) { process.stderr.write('  WARNING: ' + w + '\n'); });
   process.stderr.write('  Run: node bin/flow-tools.cjs trace-impact --ids \"' + allIds + '\"\n');
 }

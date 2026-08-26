@@ -2815,3 +2815,114 @@ test('E2E: use-tag → add → add-subtask → add-dep persists state across CLI
   assert.equal(tag.tasks[0].subtasks[0].id, '1.1', 'subtask id correct');
   assert.deepEqual(tag.tasks[0].dependencies, ['2'], 'task 1 depends on task 2');
 });
+
+// ---------------------------------------------------------------------------
+// Shared-singleton isolation — the global .spec-flow/trace.json + STATE.md are
+// an active-feature MIRROR shared by every concurrent session. A write that
+// infers its scope from that mirror lands in whichever feature another session
+// happened to build last, and nothing downstream can tell afterwards (TM task
+// ids repeat across features, so the bogus entries look native). These cases
+// pin the two rules that make that impossible: writes demand an explicit
+// --feature, and every per-feature artifact has a durable copy to restore from.
+// ---------------------------------------------------------------------------
+
+test('trace-link: refuses to infer the feature from the shared trace.json mirror', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  // Simulate a concurrent session having flipped the mirror to ITS feature.
+  fs.mkdirSync(path.join(dir, '.spec-flow'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'trace.json'),
+    JSON.stringify({ feature: 'other-session-feature', nodes: {}, links: [] }));
+
+  const r = run(['trace-link', '--task', '1', '--files', 'src/A.java'], dir);
+  assert.equal(r.ok, false, 'trace-link without --feature is refused');
+  assert.match(r.error, /MISSING_ARG: --feature/);
+  // The decisive assertion: the other session's store was NOT written to.
+  const victim = path.join(dir, '.spec-flow', 'specs', 'other-session-feature', 'file-links.json');
+  assert.equal(fs.existsSync(victim), false, "the mirror's feature must not receive our links");
+});
+
+test('trace-link: an explicit --feature still writes into that feature only', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  fs.mkdirSync(path.join(dir, '.spec-flow'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'trace.json'),
+    JSON.stringify({ feature: 'other-session-feature', nodes: {}, links: [] }));
+
+  const r = run(['trace-link', '--task', '1', '--feature', 'mine', '--files', 'src/A.java'], dir);
+  assert.equal(r.ok, true, 'explicit --feature ok');
+  assert.equal(r.data.feature, 'mine');
+  assert.ok(fs.existsSync(path.join(dir, '.spec-flow', 'specs', 'mine', 'file-links.json')));
+  assert.equal(
+    fs.existsSync(path.join(dir, '.spec-flow', 'specs', 'other-session-feature', 'file-links.json')),
+    false, 'the mirror feature is untouched');
+});
+
+test('task-baseline: --apply refuses a mirror-inferred feature (dry-run may infer)', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  fs.mkdirSync(path.join(dir, '.spec-flow'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'trace.json'),
+    JSON.stringify({ feature: 'other-session-feature', nodes: {}, links: [] }));
+
+  const r = run(['task-baseline', '--apply'], dir);
+  assert.equal(r.ok, false, '--apply without --feature is refused');
+  assert.match(r.error, /MISSING_ARG: --feature/);
+});
+
+test('state-update: writes a durable per-feature STATE.md, not just the mirror', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const r = run(['state-update', '--feature', 'alpha', '--note', 'alpha position'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.perFeatureState, path.join('.spec-flow', 'specs', 'alpha', 'STATE.md'));
+  const durable = path.join(dir, '.spec-flow', 'specs', 'alpha', 'STATE.md');
+  assert.ok(fs.existsSync(durable), 'durable per-feature STATE.md written');
+  assert.match(fs.readFileSync(durable, 'utf8'), /alpha position/);
+});
+
+test('state-update: a second feature reports switchedFrom and cannot erase the first', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  run(['state-update', '--feature', 'alpha', '--note', 'alpha position'], dir);
+
+  // A concurrent session updates ITS feature — this rewrites the shared mirror.
+  const r = run(['state-update', '--feature', 'beta', '--note', 'beta position'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.switchedFrom, 'alpha', 'the displaced feature is reported, not silently dropped');
+
+  // The mirror now shows beta...
+  const mirror = fs.readFileSync(path.join(dir, '.spec-flow', 'STATE.md'), 'utf8');
+  assert.match(mirror, /STATE — beta/);
+  // ...but alpha's own position survived intact and is restorable.
+  const alpha = fs.readFileSync(path.join(dir, '.spec-flow', 'specs', 'alpha', 'STATE.md'), 'utf8');
+  assert.match(alpha, /STATE — alpha/);
+  assert.match(alpha, /alpha position/, "alpha's durable state is untouched by beta's update");
+});
+
+test('state-update: switchedFrom is null when the mirror already holds this feature', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  run(['state-update', '--feature', 'alpha'], dir);
+  const r = run(['state-update', '--feature', 'alpha', '--note', 'again'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.switchedFrom, null, 'same feature is not a switch');
+});
+
+test('read commands report featureSource so a mirror-inferred answer is legible', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  fs.mkdirSync(path.join(dir, '.spec-flow', 'specs', 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'trace.json'),
+    JSON.stringify({ feature: 'demo', nodes: {}, links: [] }));
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'specs', 'demo', 'CHECKLIST.yaml'),
+    'tests:\n  - id: TC-001\n    name: smoke\n');
+
+  const inferred = run(['checklist-status'], dir);
+  assert.equal(inferred.ok, true);
+  assert.equal(inferred.data.feature, 'demo');
+  assert.equal(inferred.data.featureSource, 'mirror', 'inferred answers say so');
+
+  const explicit = run(['checklist-status', '--feature', 'demo'], dir);
+  assert.equal(explicit.data.featureSource, 'explicit');
+});
