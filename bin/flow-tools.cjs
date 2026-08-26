@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, resolveCols, tableShapeWarnings, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, countSdTodos, mdCell, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
+  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, resolveActiveFeature, stateFileFor, stateFeatureOf, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, resolveCols, tableShapeWarnings, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, countSdTodos, mdCell, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
 } = require('../lib/core.cjs');
 const maintenance = require('../lib/maintenance.cjs');
 const drift = require('../lib/drift.cjs');
@@ -289,7 +289,7 @@ const commands = {
   // Returns ok({ total, counts, byStatus, ready }). Zero-dep line parse (no YAML lib).
   // -----------------------------------------------------------------------
   'checklist-status'(args) {
-    const feature = args.feature || (readJsonSafe(PATHS.trace, null) || {}).feature || null;
+    const { feature, source: featureSource } = resolveActiveFeature(args.feature);
     const file = args.file || (feature ? path.join(PATHS.specs, feature, 'CHECKLIST.yaml') : null);
     if (!file) return err('MISSING_ARG: --feature <f> or --file <path>');
     if (!fs.existsSync(file)) return err(`NOT_FOUND: ${file}`);
@@ -325,7 +325,7 @@ const commands = {
     const counts = Object.fromEntries(Object.entries(byStatus).map(([k, v]) => [k, v.length]));
     const ready = counts.scaffold === 0;
     return ok({
-      feature, file, total: tests.length, counts, byStatus, ready,
+      feature, featureSource, file, total: tests.length, counts, byStatus, ready,
       note: ready
         ? 'no scaffold stubs left — fillable tests are filled or explicitly tagged; ready to run/lint.'
         : `${counts.scaffold} scaffold test(s) still have TODO stubs — fill from the SD, or tag [no-verify] / [live-e2e].`,
@@ -398,11 +398,17 @@ const commands = {
     const filePaths = String(filesArg).split(',').map(f => f.trim()).filter(Boolean);
     if (filePaths.length === 0) return err('MISSING_ARG: --files must contain at least one path');
 
-    // Feature scope: explicit --feature, else the active feature from trace.json.
-    // Scoping per feature keeps each feature's trace bounded + unambiguous (TM task
-    // ids repeat across features, so a global store would collide).
-    const flFeature = args.feature || (readJsonSafe(PATHS.trace, {}) || {}).feature || null;
-    if (!flFeature) return err('MISSING_ARG: --feature <f> (or run trace-build first so the active feature is known)');
+    // Feature scope: EXPLICIT --feature only. This is a write, and the old fallback
+    // (the active feature from the global trace.json) was a silent cross-feature
+    // corruption vector: the global trace is a shared mirror, so a concurrent
+    // session's trace-build flips it and this call then appends into THAT feature's
+    // file-links store. Nothing downstream can detect it afterwards — TM task ids
+    // repeat across features, so the bogus entries look native. Reads may still fall
+    // back to the mirror (they report featureSource); writes must state their scope.
+    const flFeature = args.feature || null;
+    if (!flFeature) {
+      return err('MISSING_ARG: --feature <f> required — trace-link writes into specs/<feature>/file-links.json, and the global trace.json mirror is shared across concurrent sessions (it can point at another feature). Pass the feature you are implementing.');
+    }
     const fileLinksFile = fileLinksPathFor(flFeature);
     ensureDir(path.dirname(fileLinksFile));
 
@@ -1230,9 +1236,25 @@ const commands = {
     const lineCount = L.length;
 
     ensureDir(PATHS.stateDir);
-    try { fs.writeFileSync(STATE_FILE, stateContent); } catch (e) { return err(`WRITE_FAILED: ${e.message}`); }
+    // Durable per-feature copy + active-feature mirror — the same split trace-build
+    // uses. Before this, STATE.md was a lone global: a state-update for feature B
+    // erased feature A's position with nothing to restore from, and the session
+    // re-anchor hook (which reads the mirror) silently re-anchored a parallel
+    // session onto the wrong feature. Now `state-update --feature A` regenerates
+    // A's view from A's durable trace at any time.
+    let prevMirrorFeature = null;
+    try { prevMirrorFeature = stateFeatureOf(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}
+    const switchedFrom = (prevMirrorFeature && prevMirrorFeature !== featureName) ? prevMirrorFeature : null;
+    const perFeatureState = featureName !== 'unknown' ? stateFileFor(featureName) : null;
+    try {
+      if (perFeatureState) {
+        ensureDir(path.join(PATHS.specs, featureName));
+        fs.writeFileSync(perFeatureState, stateContent); // durable per-feature source of truth
+      }
+      fs.writeFileSync(STATE_FILE, stateContent);        // active-feature mirror
+    } catch (e) { return err(`WRITE_FAILED: ${e.message}`); }
 
-    return ok({ state: STATE_FILE, lines: lineCount, nextStep });
+    return ok({ state: STATE_FILE, perFeatureState, switchedFrom, lines: lineCount, nextStep });
   },
 
   // -----------------------------------------------------------------------
@@ -1248,9 +1270,10 @@ const commands = {
     const tmPath = path.join(process.cwd(), '.taskmaster', 'tasks', 'tasks.json');
     // Per-feature tag isolation (same as status-report/state-update): read the
     // active feature's own task space, not master's. --feature/--tag, else trace.json.
-    const feature = args.feature || args.tag || (readJsonSafe(PATHS.trace, null) || {}).feature || undefined;
+    const { feature: wpFeature, source: featureSource } = resolveActiveFeature(args.feature || args.tag);
+    const feature = wpFeature || undefined;
     const tasks = readTmTasks(readJsonSafe(tmPath, null), feature);
-    if (!tasks.length) return ok({ ready: [], readyCount: 0, blockedCount: 0, inProgressCount: 0, doneCount: 0, total: 0, max: 0, note: 'no tasks (run parse-prd first)' });
+    if (!tasks.length) return ok({ feature: feature || null, featureSource, ready: [], readyCount: 0, blockedCount: 0, inProgressCount: 0, doneCount: 0, total: 0, max: 0, note: 'no tasks (run parse-prd first)' });
 
     const max = Math.max(1, parseInt(args.max, 10) || 3);
 
@@ -1274,6 +1297,8 @@ const commands = {
     }
     const ready = readyAll.slice(0, max);
     return ok({
+      feature: feature || null,
+      featureSource,
       ready,
       readyCount: ready.length,
       readyTotal: readyAll.length,
@@ -1308,8 +1333,15 @@ const commands = {
   // (status=done + an evidence note in details). Only `pending` tasks move.
   // -----------------------------------------------------------------------
   'task-baseline'(args) {
-    const feature = args.feature || (readJsonSafe(PATHS.trace, null) || {}).feature;
+    // --apply MUTATES tasks.json (statuses -> done). Same rule as trace-link: a
+    // write never infers its scope from the shared global mirror, or a concurrent
+    // session's trace-build silently baselines the wrong feature's tasks. The
+    // dry-run proposal is read-only, so it may still fall back (reporting source).
+    const { feature, source: featureSource } = resolveActiveFeature(args.feature);
     if (!feature) return err('MISSING_ARG: --feature <feature>');
+    if (args.apply && featureSource !== 'explicit') {
+      return err('MISSING_ARG: --feature <f> required with --apply — task-baseline writes task statuses, and the global trace.json mirror is shared across concurrent sessions (it can point at another feature).');
+    }
     const trace = readTrace(feature);
     if (!trace) return err('NO_TRACE: run trace-build first');
 
@@ -1649,7 +1681,7 @@ const commands = {
       ? new Set(args.repos.split(',').map((s) => s.trim()).filter(Boolean)) : null;
     let filterSource = repoFilter ? '--repos' : null;
     if (!repoFilter) {
-      const feat = args.feature || (kind === 'sd' ? args.name : null) || (readJsonSafe(PATHS.trace, null) || {}).feature || null;
+      const feat = resolveActiveFeature(args.feature || (kind === 'sd' ? args.name : null)).feature;
       if (feat) {
         const tr = readTrace(feat);
         if (tr && Array.isArray(tr.repos) && tr.repos.length) { repoFilter = new Set(tr.repos); filterSource = `feature ${feat}`; }
@@ -1748,7 +1780,7 @@ const commands = {
     const scopeWarnings = [];
     const explicitRepos = (typeof args.repos === 'string' && args.repos.trim())
       ? new Set(args.repos.split(',').map(s => s.trim()).filter(Boolean)) : null;
-    const vcFeature = args.feature || (readJsonSafe(PATHS.trace, null) || {}).feature || null;
+    const { feature: vcFeature, source: vcFeatureSource } = resolveActiveFeature(args.feature);
     // Declared subset (intent stated up front, ABOVE file-links evidence).
     let declaredRepos = null;
     if (!explicitRepos && vcFeature) {
@@ -2102,7 +2134,7 @@ const commands = {
     const ran = summary.ok + summary.warn + summary.fail;
     const gate = summary.fail > 0 ? 'fail' : (ran === 0 ? 'skipped' : (expectFail ? 'red-confirmed' : 'pass'));
 
-    const result = { checks, summary, gate, repos: scopedRoots.map((r) => r.name).filter(Boolean), scope: scopeNote };
+    const result = { checks, summary, gate, feature: vcFeature, featureSource: vcFeatureSource, repos: scopedRoots.map((r) => r.name).filter(Boolean), scope: scopeNote };
     if (scopeWarnings.length) result.scopeWarnings = scopeWarnings;
     const testScoped = checks.some((c) => c.scoped);
     result.testsScoped = testScoped;
@@ -2356,6 +2388,7 @@ const commands = {
       project,
       branch,
       feature: featureName,
+      featureSource: args.feature ? 'explicit' : (globalTrace && globalTrace.feature === featureName ? 'mirror' : (featureName ? 'specs-scan' : 'none')),
       sd: sdExists ? { path: sdPath, todos: sdTodos } : null,
       trace: trace ? { fr: frCount, tc: tcCount, nfr: nfrCount, links } : null,
       checkpoint,
