@@ -2,6 +2,15 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.8.8] — 2026-08-27
+
+**The marketplace advertised a version nobody was running, for 18 releases.** Found while auditing tag placement across the repo's history. `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` are two hand-edited files that must move together on every release, and nothing checked that they did.
+
+- **The drift, measured across every tag:** `v0.5.8` through `v0.8.1` — eighteen consecutive tags — carry `marketplace.json` `metadata.version` of **0.5.5** while `plugin.json` climbs to 0.8.1. `v0.8.2` and `v0.8.3` then lag by exactly one release (marketplace 0.8.1 and 0.8.2). `v0.8.4` onward are correct. Note what this means for a fix: for the 18-tag stretch, no commit in that range holds a correct `marketplace.json`, so no amount of tag-moving repairs it — only a history rewrite would, which is not worth doing to released versions. Those tags stay as they are; the record is here instead.
+- **New `/sf:doctor` check: `version-sync`.** Same shape as the `current-tag` drift check — compare the two real sources rather than trusting that a manual release step ran. Four outcomes, deliberately distinguished: versions equal → `ok`; versions differ → `warn` naming both and stating *which one users actually see*; a version field absent or non-string → `warn` naming the offending field; a file unreadable or missing → `warn` that says **unreadable**, not drift, because a partial install is not a release defect and pointing that reader at a version field would send them to fix the wrong thing.
+- **The comparison is `core.versionSyncStatus()`, a pure function.** Doctor resolves the two paths under `PLUGIN_ROOT` (never the project cwd — doctor runs inside the *user's* repo) and hands the parsed objects over. Keeping the logic pure is what makes all four branches testable without fabricating a plugin tree; doctor's own test then pins only the wiring.
+- 824 Node tests green (7 new: the four branches, the historical 0.8.1-vs-0.5.5 case, the one-release lag that `v0.8.2`/`v0.8.3` show, and doctor emitting the check against the real plugin tree).
+
 ## [0.8.7] — 2026-08-27
 
 **`bin/flow-tools.cjs` split into `lib/` modules, plus one bug the 0.8.6 ship marker exposed.** The pre-commit hook had been warning for two releases straight (2785 LOC at 0.8.5, 2826 at 0.8.6, against a 3000 cap), and both of those releases added to that file.

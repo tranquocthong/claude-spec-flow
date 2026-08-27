@@ -294,3 +294,65 @@ test('parseProseBullets: groups bullets by nearest heading, skips tables and noi
   const br = m.get('6. Business Rules');
   assert.deepEqual(br, ['BR: never do C.']);
 });
+
+// ---------------------------------------------------------------------------
+// versionSyncStatus — .claude-plugin/plugin.json vs marketplace.json.
+//
+// Regression guard for a drift nothing was checking: this repo shipped 18
+// consecutive tags (v0.5.8 through v0.8.1) whose marketplace metadata still read
+// 0.5.5 while plugin.json had reached 0.8.1, so the marketplace advertised a
+// version nobody was running. Two hand-edited files that must move together on
+// every release is exactly the shape a check has to cover.
+// ---------------------------------------------------------------------------
+
+const mkPlugin = (v) => (v === undefined ? {} : { version: v });
+const mkMarket = (v) => (v === undefined ? { metadata: {} } : { metadata: { version: v } });
+
+test('versionSyncStatus: matching versions are ok', () => {
+  const r = core.versionSyncStatus(mkPlugin('0.8.7'), mkMarket('0.8.7'));
+  assert.equal(r.status, 'ok');
+  assert.match(r.detail, /both at 0\.8\.7/);
+  assert.equal(r.fix, null);
+});
+
+test('versionSyncStatus: the historical 0.8.1-vs-0.5.5 drift is caught', () => {
+  const r = core.versionSyncStatus(mkPlugin('0.8.1'), mkMarket('0.5.5'));
+  assert.equal(r.status, 'warn');
+  assert.match(r.detail, /plugin\.json is 0\.8\.1/);
+  assert.match(r.detail, /marketplace.*0\.5\.5/);
+  assert.match(r.detail, /advertises 0\.5\.5/, 'the detail says what users actually see');
+  assert.match(r.fix, /set marketplace\.json metadata\.version to 0\.8\.1/);
+});
+
+test('versionSyncStatus: a one-release lag is caught too (the v0.8.2 / v0.8.3 case)', () => {
+  const r = core.versionSyncStatus(mkPlugin('0.8.3'), mkMarket('0.8.2'));
+  assert.equal(r.status, 'warn');
+  assert.equal(r.pluginVersion, '0.8.3');
+  assert.equal(r.marketplaceVersion, '0.8.2');
+});
+
+test('versionSyncStatus: an unreadable file reports as unreadable, not as drift', () => {
+  // A partial install is not a release defect — saying "drift" there would send
+  // the reader to edit a version field when the fix is to reinstall.
+  const r = core.versionSyncStatus(null, mkMarket('0.8.7'));
+  assert.equal(r.status, 'warn');
+  assert.match(r.detail, /unreadable or missing: plugin\.json/);
+  assert.match(r.fix, /reinstall/);
+  assert.doesNotMatch(r.detail, /drift/);
+});
+
+test('versionSyncStatus: a missing version field names which one', () => {
+  const r = core.versionSyncStatus(mkPlugin(undefined), mkMarket('0.8.7'));
+  assert.equal(r.status, 'warn');
+  assert.match(r.detail, /plugin\.json\.version/);
+  assert.doesNotMatch(r.detail, /marketplace\.json\.metadata\.version/);
+
+  const r2 = core.versionSyncStatus(mkPlugin('0.8.7'), mkMarket(undefined));
+  assert.match(r2.detail, /marketplace\.json\.metadata\.version/);
+});
+
+test('versionSyncStatus: a non-string version is treated as absent, not compared', () => {
+  const r = core.versionSyncStatus({ version: 87 }, mkMarket('0.8.7'));
+  assert.equal(r.status, 'warn');
+  assert.match(r.detail, /version field absent/);
+});
