@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Marketplace for spec-flow — a spec-driven workflow plugin for Claude Code.",
-    "version": "0.8.6"
+    "version": "0.8.7"
   },
   "plugins": [
     {
