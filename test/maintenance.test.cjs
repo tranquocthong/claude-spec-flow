@@ -249,6 +249,30 @@ test('doctor: warns when .taskmaster/state.json has no currentTag set', () => {
   });
 });
 
+test('doctor: current-tag does not nag about a SHIPPED feature', () => {
+  inTmp(() => {
+    // Drift is only a hazard while state ops can still land on the wrong tag.
+    // Once the feature has shipped there are none left, and currentTag pointing
+    // elsewhere is the correct end state — warning here trains the reader to
+    // ignore the check. Surfaced by this repo's own post-ship doctor run.
+    seedTagState('shipped-feature', 'some-other-tag', ['some-other-tag']);
+    fs.mkdirSync('.spec-flow/specs/shipped-feature', { recursive: true });
+    fs.writeFileSync('.spec-flow/specs/shipped-feature/ship.json',
+      JSON.stringify({ feature: 'shipped-feature', shippedAt: '2026-08-27T00:00:00.000Z', ref: 'abc1234' }));
+    const c = currentTagCheck();
+    assert.equal(c.status, 'ok');
+    assert.match(c.detail, /shipped 2026-08-27/);
+  });
+});
+
+test('doctor: current-tag still warns for an UNshipped feature with the same setup', () => {
+  inTmp(() => {
+    seedTagState('shipped-feature', 'some-other-tag', ['some-other-tag']);
+    const c = currentTagCheck();
+    assert.equal(c.status, 'warn', 'the ship marker is what silences it, nothing else');
+  });
+});
+
 test('doctor: current-tag check is skipped entirely when the project has no .taskmaster/', () => {
   inTmp(() => {
     fs.mkdirSync('.spec-flow', { recursive: true });
