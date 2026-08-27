@@ -2,6 +2,14 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.8.7] — 2026-08-27
+
+**`bin/flow-tools.cjs` split into `lib/` modules, plus one bug the 0.8.6 ship marker exposed.** The pre-commit hook had been warning for two releases straight (2785 LOC at 0.8.5, 2826 at 0.8.6, against a 3000 cap), and both of those releases added to that file.
+
+- **Three modules extracted, behaviour unchanged.** `lib/trace.cjs` (`trace-link`, `trace-build`, `trace-repos`, `trace-impact`), `lib/verify.cjs` (`verify-collect`, `verify-code`), `lib/task-cli.cjs` (the 11 `task-*` wrappers over task-core / tag-manager / dependency-manager / subtask-manager / expand-hook). They follow the pattern `lib/maintenance.cjs` and `lib/drift.cjs` already set: each exports a plain object of command methods, spread into the one flat `commands` table the dispatcher reads, so the CLI contract is byte-identical. `SD_COLS` moved to `lib/core.cjs` — it is a shared data spec, and `route` (still in flow-tools) and `trace-build` (now in trace.cjs) must agree on which cell is the Requirement. `bin/flow-tools.cjs` drops **2826 → 1563 LOC**; no file involved exceeds 750. Verified by diffing the resolved command set before and after: 41 commands both sides, identical names, no collisions across modules.
+- **`/sf:doctor` nagged about `currentTag` drift on a feature that had already shipped.** Exposed by this repo's own post-ship doctor run: `native-task-manager-cutover` shipped, `currentTag` had correctly moved on, and doctor kept saying to `use-tag` it back. The hazard the check exists for is state ops landing on the wrong tag *mid-implementation* — a shipped feature has none left to land, so `currentTag` pointing elsewhere is the correct end state, and warning about it is noise that trains the reader to ignore the check. It now reads the 0.8.6 ship marker and reports `ok` for a shipped active feature. An unshipped feature with the identical setup still warns.
+- 817 Node tests green (2 new). No test changed to accommodate the split — the same 815 that passed against the single file pass against the modules, which is the point.
+
 ## [0.8.6] — 2026-08-27
 
 **The Next Step ladder had no rung for a feature that already shipped.** `verified` was its last one, so `state-update` kept answering *"Done + verified — ship: stage, then `commit` skill (push)"* to a feature whose code was long since on `main`. The session re-anchor hook reads that line and replays it every turn, and no artifact on disk could contradict it — this repo's own `native-task-manager-cutover` was being told to ship for weeks after it had.
