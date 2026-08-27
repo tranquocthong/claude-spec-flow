@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, resolveActiveFeature, stateFileFor, stateFeatureOf, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, resolveCols, tableShapeWarnings, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, countSdTodos, mdCell, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
+  STATE_DIR, PATHS, PLUGIN_ROOT, STATE_FILE, SKIP_SCAN_DIRS, ok, err, parseArgs, readJsonSafe, traceFileFor, readTrace, resolveActiveFeature, stateFileFor, stateFeatureOf, shipFileFor, ensureDir, slugify, pad3, readTmTasks, fileLinksPathFor, resolveRepos, parseReposArg, langPack, kwRe, cleanHeading, parseHeadings, bodyOf, classifyHeading, findHeading, findTableByHeader, parseFirstTable, parseAllTables, splitRow, resolveCols, tableShapeWarnings, parseUserStories, trimOrNull, extractBulletsAfter, inferDesignType, parseSrs, parseProseBullets, TODO, countSdTodos, mdCell, moscowFor, genSd, readSdTables, scoreComplexity, routeFor, tcIdsForReq, resolveTemplate
 } = require('../lib/core.cjs');
 const maintenance = require('../lib/maintenance.cjs');
 const drift = require('../lib/drift.cjs');
@@ -669,10 +669,18 @@ const commands = {
     }
 
     ensureDir(PATHS.stateDir);
+    // Carry forward the declared repo subset (trace-repos --set). It is DECLARED
+    // intent, not derived from the SD, so a rebuild has nothing to regenerate it
+    // from — before this, `trace-repos --set` followed by any `trace-build` silently
+    // dropped it, and branch-ensure/verify-code fell back to all repos.
+    const priorTrace = readJsonSafe(traceFileFor(feature), null);
+    const priorRepos = priorTrace && Array.isArray(priorTrace.repos) && priorTrace.repos.length
+      ? priorTrace.repos : null;
     const trace = {
       feature,
       generatedFrom: path.resolve(sdPath),
       generatedAt: new Date().toISOString(),
+      ...(priorRepos ? { repos: priorRepos } : {}),
       nodes: {
         fr: frNodes,
         tc: tcNodes,
@@ -1092,6 +1100,11 @@ const commands = {
     const feature = args.feature || null;
     const note = args.note || null;
     const now = new Date().toISOString();
+    // --shipped records the ship in specs/<feature>/ship.json. It needs its own
+    // file: STATE.md is regenerated wholesale on every run, so a marker written
+    // into it would not survive the next update. Requires an explicit --feature
+    // for the same reason trace-link does — it is a per-feature write.
+    if (args.shipped && !feature) return err('MISSING_ARG: --feature <f> required with --shipped');
 
     // Try to read trace for task counts and feature name (per-feature durable copy
     // when --feature is given, else the active-feature mirror).
@@ -1162,6 +1175,23 @@ const commands = {
 
     // ---- Deterministic NEXT STEP (re-orients the agent after context loss) ----
     // Decision ladder driven purely by artifacts on disk — no AI, no guessing.
+    const shipPath = featureName !== 'unknown' ? shipFileFor(featureName) : null;
+    if (args.shipped && shipPath) {
+      ensureDir(path.join(PATHS.specs, featureName));
+      const prevShip = readJsonSafe(shipPath, null);
+      const shipRec = {
+        feature: featureName,
+        // Keep the FIRST ship time; a re-run records the latest instead of
+        // rewriting history (a feature ships once, then gets revised).
+        shippedAt: (prevShip && prevShip.shippedAt) || now,
+        lastShipUpdate: now,
+        ref: args.ref || (prevShip && prevShip.ref) || null,
+        note: note || (prevShip && prevShip.note) || null,
+      };
+      try { fs.writeFileSync(shipPath, JSON.stringify(shipRec, null, 2) + '\n'); }
+      catch (e) { return err(`WRITE_FAILED: ${e.message}`); }
+    }
+    const shipped = shipPath ? readJsonSafe(shipPath, null) : null;
     const sdPath = path.join(process.cwd(), PATHS.specs, featureName, 'SD.md');
     const checklistPath = path.join(process.cwd(), PATHS.specs, featureName, 'CHECKLIST.yaml');
     const verificationPath = path.join(process.cwd(), PATHS.specs, featureName, 'VERIFICATION.md');
@@ -1184,9 +1214,18 @@ const commands = {
       } else {
         let verified = false;
         try { verified = /status:\s*passed/i.test(fs.readFileSync(verificationPath, 'utf8')); } catch {}
-        nextStep = verified
-          ? 'Done + verified — ship: stage, then `commit` skill (push).'
-          : `Done — \`/sf:manual-test ${featureName}\` (runs smoke + regression + records VERIFICATION).`;
+        // Shipped is the ladder's terminal rung. Without it `verified` was the last
+        // one, so a feature that had already shipped kept being told to ship — the
+        // re-anchor hook repeated that instruction every turn, forever, with no
+        // artifact on disk able to contradict it.
+        if (shipped) {
+          const when = String(shipped.shippedAt || '').slice(0, 10);
+          nextStep = `Shipped${when ? ` ${when}` : ''}${shipped.ref ? ` (${shipped.ref})` : ''} — nothing pending. Revise it with \`/sf:change ${featureName}\`, or start the next feature with \`/sf:ingest\`.`;
+        } else {
+          nextStep = verified
+            ? 'Done + verified — ship: stage, then `commit` skill (push).'
+            : `Done — \`/sf:manual-test ${featureName}\` (runs smoke + regression + records VERIFICATION).`;
+        }
       }
     }
 
@@ -1199,6 +1238,7 @@ const commands = {
     L.push('');
     L.push(`- Feature: **${featureName}**`);
     L.push(`- Progress: ${position}`);
+    if (shipped) L.push(`- Shipped: ${shipped.shippedAt}${shipped.ref ? ` · ${shipped.ref}` : ''}`);
     if (note) L.push(`- Note: ${note}`);
     L.push('');
     L.push('## Next Step');
@@ -1254,7 +1294,7 @@ const commands = {
       fs.writeFileSync(STATE_FILE, stateContent);        // active-feature mirror
     } catch (e) { return err(`WRITE_FAILED: ${e.message}`); }
 
-    return ok({ state: STATE_FILE, perFeatureState, switchedFrom, lines: lineCount, nextStep });
+    return ok({ state: STATE_FILE, perFeatureState, switchedFrom, shipped: shipped ? { shippedAt: shipped.shippedAt, ref: shipped.ref } : null, lines: lineCount, nextStep });
   },
 
   // -----------------------------------------------------------------------
@@ -2393,6 +2433,7 @@ const commands = {
       trace: trace ? { fr: frCount, tc: tcCount, nfr: nfrCount, links } : null,
       checkpoint,
       checklist: checklistStatus,
+      shipped: featureName ? readJsonSafe(shipFileFor(featureName), null) : null,
       tasks: taskCounts.total > 0 ? taskCounts : null,
       ready: ready.length > 0 ? ready : null,
       verified,
