@@ -2926,3 +2926,115 @@ test('read commands report featureSource so a mirror-inferred answer is legible'
   const explicit = run(['checklist-status', '--feature', 'demo'], dir);
   assert.equal(explicit.data.featureSource, 'explicit');
 });
+
+// ---------------------------------------------------------------------------
+// Ship marker — the Next Step ladder's terminal rung. `verified` used to be the
+// last rung, so a feature that had already shipped kept being told to ship, and
+// the session re-anchor hook repeated that instruction every turn with nothing on
+// disk able to contradict it.
+// ---------------------------------------------------------------------------
+
+/** Give `feature` an SD, a filled CHECKLIST and a passing VERIFICATION. */
+function shippableFeature(dir, feature) {
+  const d = path.join(dir, '.spec-flow', 'specs', feature);
+  fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'SD.md'), '# SD\n\nno todos here\n');
+  fs.writeFileSync(path.join(d, 'CHECKLIST.yaml'), 'tests:\n  - id: TC-001\n    name: smoke\n');
+  fs.writeFileSync(path.join(d, 'VERIFICATION.md'), '# VERIFICATION\n\nstatus: passed\n');
+  const tmDir = path.join(dir, '.taskmaster', 'tasks');
+  fs.mkdirSync(tmDir, { recursive: true });
+  fs.writeFileSync(path.join(tmDir, 'tasks.json'),
+    JSON.stringify({ [feature]: { tasks: [{ id: 1, title: 't1', status: 'done' }] } }));
+}
+
+test('state-update: a verified-but-unshipped feature is still told to ship', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  shippableFeature(dir, 'demo');
+  const r = run(['state-update', '--feature', 'demo'], dir);
+  assert.equal(r.ok, true);
+  assert.equal(r.data.shipped, null);
+  assert.match(r.data.nextStep, /ship: stage/);
+});
+
+test('state-update --shipped: records ship.json and the ladder stops asking', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  shippableFeature(dir, 'demo');
+  const r = run(['state-update', '--feature', 'demo', '--shipped', '--ref', 'abc1234'], dir);
+  assert.equal(r.ok, true);
+  assert.ok(r.data.shipped, 'ship recorded in the Result');
+  assert.equal(r.data.shipped.ref, 'abc1234');
+  assert.match(r.data.nextStep, /^Shipped/, 'terminal rung replaces the ship instruction');
+  assert.doesNotMatch(r.data.nextStep, /ship: stage/);
+
+  const marker = path.join(dir, '.spec-flow', 'specs', 'demo', 'ship.json');
+  assert.ok(fs.existsSync(marker), 'ship.json written');
+  assert.match(fs.readFileSync(path.join(dir, '.spec-flow', 'STATE.md'), 'utf8'), /- Shipped: /);
+});
+
+test('state-update: the ship marker survives later plain state-updates', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  shippableFeature(dir, 'demo');
+  run(['state-update', '--feature', 'demo', '--shipped', '--ref', 'abc1234'], dir);
+  // A later update with no --shipped must not resurrect the ship instruction —
+  // STATE.md is regenerated wholesale, which is exactly why the marker is its own file.
+  const r = run(['state-update', '--feature', 'demo', '--note', 'routine refresh'], dir);
+  assert.equal(r.ok, true);
+  assert.match(r.data.nextStep, /^Shipped/);
+  assert.equal(r.data.shipped.ref, 'abc1234', 'ref carried forward');
+});
+
+test('state-update --shipped: re-running keeps the original ship date', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  shippableFeature(dir, 'demo');
+  const first = run(['state-update', '--feature', 'demo', '--shipped'], dir);
+  const again = run(['state-update', '--feature', 'demo', '--shipped'], dir);
+  assert.equal(again.data.shipped.shippedAt, first.data.shipped.shippedAt,
+    'a feature ships once; re-running does not rewrite that date');
+});
+
+test('state-update --shipped: refuses without an explicit --feature', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  const r = run(['state-update', '--shipped'], dir);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /MISSING_ARG: --feature/);
+});
+
+test('status-report: surfaces the ship marker', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  shippableFeature(dir, 'demo');
+  fs.writeFileSync(path.join(dir, '.spec-flow', 'trace.json'),
+    JSON.stringify({ feature: 'demo', nodes: {}, links: [] }));
+  assert.equal(run(['status-report'], dir).data.shipped, null);
+  run(['state-update', '--feature', 'demo', '--shipped', '--ref', 'deadbee'], dir);
+  const after = run(['status-report'], dir);
+  assert.equal(after.data.shipped.ref, 'deadbee');
+});
+
+test('trace-build: preserves the repo subset declared via trace-repos', () => {
+  const dir = tmpProject();
+  initProject(dir);
+  // Declare config.repos so trace-repos accepts the names.
+  const cfgPath = path.join(dir, '.spec-flow', 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+  cfg.repos = { 'svc-a': '../svc-a', 'svc-b': '../svc-b' };
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  const sdDir = path.join(dir, '.spec-flow', 'specs', 'demo');
+  fs.mkdirSync(sdDir, { recursive: true });
+  fs.writeFileSync(path.join(sdDir, 'SD.md'), '# SD\n\n| ID | Requirement | Priority |\n| --- | --- | --- |\n| FR-001 | do a thing | Must |\n');
+
+  const set = run(['trace-repos', '--feature', 'demo', '--set', 'svc-b'], dir);
+  assert.equal(set.ok, true);
+  // A rebuild used to construct a fresh trace object and drop `repos` — declared
+  // intent that nothing in the SD can regenerate.
+  const build = run(['trace-build', '--sd', path.join('.spec-flow', 'specs', 'demo', 'SD.md'), '--feature', 'demo'], dir);
+  assert.equal(build.ok, true);
+  const after = run(['trace-repos', '--feature', 'demo'], dir);
+  assert.deepEqual(after.data.repos, ['svc-b'], 'declared repo subset survives trace-build');
+});
