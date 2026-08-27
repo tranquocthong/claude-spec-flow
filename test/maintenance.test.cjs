@@ -249,6 +249,18 @@ test('doctor: warns when .taskmaster/state.json has no currentTag set', () => {
   });
 });
 
+test('doctor: reports version-sync against the real plugin tree', () => {
+  inTmp(() => {
+    // The comparison itself is unit-tested in core.test.cjs (versionSyncStatus).
+    // This pins the wiring: doctor emits the check, reading the actual
+    // .claude-plugin/ files from PLUGIN_ROOT rather than the project cwd.
+    const c = maintenance.doctor({}).data.checks.find(x => x.name === 'version-sync');
+    assert.ok(c, 'doctor emits a version-sync check');
+    assert.equal(c.status, 'ok', 'this repo ships plugin.json and marketplace.json in sync');
+    assert.match(c.detail, /both at \d+\.\d+\.\d+/);
+  });
+});
+
 test('doctor: current-tag does not nag about a SHIPPED feature', () => {
   inTmp(() => {
     // Drift is only a hazard while state ops can still land on the wrong tag.
