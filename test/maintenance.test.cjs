@@ -78,11 +78,11 @@ test('init-project: patches config.models into a pre-existing config.json missin
   });
 });
 
-test('init-project: seeds phase.codeReview: ask — the pre-ship gate defaults to asking', () => {
+test('init-project: seeds phase.codeReview: off — the pre-ship gate is opt-in', () => {
   inTmp(() => {
     maintenance['init-project']({});
     const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
-    assert.deepEqual(cfg.phase, { confirmTasks: true, taskNotes: false, codeReview: 'ask' });
+    assert.deepEqual(cfg.phase, { confirmTasks: true, taskNotes: false, codeReview: 'off' });
   });
 });
 
@@ -97,7 +97,7 @@ test('init-project: back-fills phase.codeReview + models.codeReviewer into an ol
     maintenance['init-project']({});
     const cfg = JSON.parse(fs.readFileSync('.spec-flow/config.json', 'utf8'));
     // Back-filled, discoverable, and behaviour-neutral (absent already read as these).
-    assert.equal(cfg.phase.codeReview, 'ask');
+    assert.equal(cfg.phase.codeReview, 'off');
     assert.equal(cfg.models.codeReviewer, 'sonnet');
     // Pre-existing choices survive the patch.
     assert.equal(cfg.phase.confirmTasks, false);

@@ -63,13 +63,13 @@ test('review-scope: NO_FEATURE when nothing resolves', () => {
   });
 });
 
-test('review-scope: absent config.phase.codeReview defaults to ask', () => {
+test('review-scope: absent config.phase.codeReview defaults to off (opt-in gate)', () => {
   inTmp(() => {
     writeConfig({ project: 'p', phase: { confirmTasks: true } });
     writeTrace('demo');
     const r = review['review-scope']({});
     assert.equal(r.ok, true);
-    assert.equal(r.data.gate, 'ask');
+    assert.equal(r.data.gate, 'off');
     assert.equal(r.data.gateSource, 'default');
     assert.equal(r.data.feature, 'demo');
   });
@@ -100,12 +100,12 @@ test('review-scope: booleans are accepted as the obvious shorthand', () => {
   });
 });
 
-test('review-scope: a nonsense gate value falls back to ask and says so', () => {
+test('review-scope: a nonsense gate value falls back to off and says so', () => {
   inTmp(() => {
     writeConfig({ phase: { codeReview: 'maybe' } });
     writeTrace('demo');
     const r = review['review-scope']({ feature: 'demo' });
-    assert.equal(r.data.gate, 'ask');
+    assert.equal(r.data.gate, 'off');
     assert.equal(r.data.gateSource, 'invalid');
     assert.equal(r.data.invalidGateValue, 'maybe');
   });

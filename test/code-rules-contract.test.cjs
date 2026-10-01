@@ -216,3 +216,20 @@ test('review-collect: a project-rule finding rated low is raised to the medium f
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('commands/phase.md step 3b: the code review is opt-in, default off, never self-started', () => {
+  const start = phaseMd.indexOf('3b. **Code review');
+  const block = phaseMd.slice(start, phaseMd.indexOf('4. **Ship**', start));
+  assert.match(block, /default `off`/);
+  assert.match(block, /Do NOT run, offer, or suggest a code review unless `review-scope` returns `gate: ask` or `gate: always`/);
+  assert.doesNotMatch(block, /\*\*`ask`\*\* \(default\)/);
+});
+
+test('commands/phase.md step 3b: gate ask is a real AskUserQuestion and only an explicit yes runs the review', () => {
+  const start = phaseMd.indexOf('3b. **Code review');
+  const block = phaseMd.slice(start, phaseMd.indexOf('4. **Ship**', start));
+  assert.match(block, /`AskUserQuestion` tool call/);
+  assert.match(block, /Only an explicit `Yes, run the review` runs the review/);
+  assert.match(block, /Silence is never consent/);
+  assert.match(block, /auto-mode/);
+});

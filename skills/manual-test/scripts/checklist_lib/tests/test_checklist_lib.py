@@ -375,6 +375,59 @@ class TestExecSetupStep(unittest.TestCase):
         self.assertEqual(ctx["varstore"].get("TS"), "123")
 
 
+class TestHttpSetupExpectStatus(unittest.TestCase):
+    """A setup http step that is MEANT to fail (wrong-OTP attempts that end in a 401)
+    used to abort the whole test on any status >= 400, before the assertion was ever
+    reached. `expect_status:` declares the intended status; undeclared keeps the old
+    rule, and a declared step still fails on any other status (no swallow-everything)."""
+
+    def _run(self, step, status):
+        from checklist_lib import setup, http
+        orig = http.do_request
+        http.do_request = lambda m, u, h, b: (status, {"id": "x"}, "")
+        try:
+            ctx = {"db": "d", "scripts_dir": ".", "base_url": "http://x",
+                   "varstore": VarStore(), "tokens": {}, "doc": {}}
+            return setup.run_steps([step], ctx), ctx
+        finally:
+            http.do_request = orig
+
+    def test_undeclared_keeps_legacy_failure_on_4xx(self):
+        err, _ = self._run({"http": {"method": "POST", "path": "/login"}}, 401)
+        self.assertIn("→ 401", err)
+
+    def test_declared_status_passes(self):
+        err, _ = self._run({"http": {"method": "POST", "path": "/login"}, "expect_status": 401}, 401)
+        self.assertIsNone(err)
+
+    def test_nested_form_and_list_pass(self):
+        err, _ = self._run({"http": {"method": "POST", "path": "/login", "expect_status": [400, 401]}}, 400)
+        self.assertIsNone(err)
+
+    def test_declared_but_different_status_still_fails(self):
+        for got in (200, 500):
+            err, _ = self._run({"http": {"method": "POST", "path": "/login"}, "expect_status": 401}, got)
+            self.assertIn("expect_status: 401", err)
+            self.assertIn(f"→ {got}", err)
+
+    def test_any_accepts_errors_but_not_a_missing_response(self):
+        err, _ = self._run({"http": {"method": "POST", "path": "/login"}, "expect_status": "any"}, 503)
+        self.assertIsNone(err)
+        err, _ = self._run({"http": {"method": "POST", "path": "/login"}, "expect_status": "any"}, 0)
+        self.assertIn("any HTTP response", err)
+
+    def test_invalid_value_is_rejected(self):
+        for bad in ("nope", 99, 700, True, []):
+            err, _ = self._run({"http": {"method": "POST", "path": "/login"}, "expect_status": bad}, 401)
+            self.assertIn("invalid expect_status", err, repr(bad))
+
+    def test_capture_still_runs_on_an_expected_error(self):
+        err, ctx = self._run({"http": {"method": "POST", "path": "/login", "capture": {"ID": "$.id"}},
+                              "expect_status": 401}, 401)
+        self.assertIsNone(err)
+        self.assertEqual(ctx["varstore"].get("ID"), "x")
+
+
 class TestHttpSetupCaptureStep(unittest.TestCase):
     """http: setup steps document (and the shipped templates use) `capture:` NESTED
     inside the `http:` block — unlike `exec`/`sql`, whose payload is a bare string

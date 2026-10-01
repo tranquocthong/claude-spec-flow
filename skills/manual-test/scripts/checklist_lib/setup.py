@@ -7,7 +7,10 @@ Each step is one of:
                           optional `db_ref:` → another service's database.)
   - seed: name            run the named snippet from the top-level `seed:` map
                           (optional `db_ref:`)
-  - http: {...}           call an endpoint (optional `capture: {VAR: "$.json.path"}`)
+  - http: {...}           call an endpoint (optional `capture: {VAR: "$.json.path"}`;
+                          optional `expect_status: 401 | [400, 401] | any` — the status(es)
+                          this step is SUPPOSED to get, for setup that deliberately drives
+                          failures, e.g. wrong-OTP attempts. Absent → any status >= 400 aborts)
   - redis: |              run redis-cli line(s)
   - exec: "cmd"           run a project command; capture stdout into vars
                           (optional `capture: {VAR: "$.json.path"}` if the command
@@ -118,8 +121,23 @@ def _do_http(sb, ctx, dry_run):
         raise RuntimeError(f"unknown base_url_ref '{ref}' — define it under config.base_urls")
     url = http.build_url(base, path, vs.expand_obj(h.get("query") or {}))
     status, jbody, _ = http.do_request(method, url, headers, body)
-    if status >= 400:
-        raise RuntimeError(f"setup http {method} {path} → {status}")
+    # `expect_status:` (nested in `http:` or sibling of it, like `capture:`; nested
+    # wins) declares the status this step is MEANT to get. Absent keeps the legacy
+    # rule (>= 400 aborts the setup). Declared means exactly that: a status outside
+    # the declared set still aborts, so a step that expects a 401 cannot go green on
+    # a 200 or a 500. "any" accepts every real HTTP response, but never status 0
+    # (no response at all).
+    declared = h.get("expect_status", sb.get("expect_status"))
+    if declared is None:
+        if status >= 400:
+            raise RuntimeError(f"setup http {method} {path} → {status}")
+    else:
+        allowed = parse_expect_status(declared)
+        if allowed is None:
+            raise RuntimeError(f"setup http {method} {path}: invalid expect_status {declared!r} — use an int, a list of ints, or \"any\"")
+        if not _status_allowed(status, allowed):
+            want = "any HTTP response" if allowed == "any" else "/".join(str(c) for c in sorted(allowed))
+            raise RuntimeError(f"setup http {method} {path} → {status} (expect_status: {want})")
     # `capture:` is documented and templated as nested INSIDE the `http:` block
     # (sibling of method/path/token/body — see templates/CHECKLIST.yaml and this
     # module's own docstring), not as a sibling of `http:` at the step level (that
@@ -138,6 +156,30 @@ def _do_http(sb, ctx, dry_run):
     for var, expr in (h.get("capture") or sb.get("capture") or {}).items():
         vals = jsonpath.resolve(vs.expand(expr), jbody) if jbody is not None else []
         vs.set(var, vals[0] if vals else "")
+
+
+def parse_expect_status(value):
+    """Normalise an `expect_status:` value to "any" or a set of ints; None if invalid.
+    Shared with lint-checklist.sh so the linter and the runner agree on the grammar."""
+    if isinstance(value, str) and value.strip().lower() == "any":
+        return "any"
+    items = value if isinstance(value, list) else [value]
+    codes = set()
+    for it in items:
+        if isinstance(it, bool):
+            return None
+        if isinstance(it, str) and it.strip().isdigit():
+            it = int(it.strip())
+        if not isinstance(it, int) or not 100 <= it <= 599:
+            return None
+        codes.add(it)
+    return codes or None
+
+
+def _status_allowed(status, allowed):
+    if allowed == "any":
+        return status > 0
+    return status in allowed
 
 
 def _do_exec(sb, ctx, dry_run):

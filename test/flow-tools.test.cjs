@@ -4146,6 +4146,35 @@ test('REGRESSION lint-checklist.sh: flags a dict `expect:` on a SQL verify/setup
   assert.match(String(threw.stderr), /dict expect on a SQL step is never asserted/);
 });
 
+test('lint-checklist.sh: accepts a valid http setup expect_status and flags a malformed one', () => {
+  const lint = (stepYaml) => {
+    const dir = tmpProject();
+    fs.writeFileSync(path.join(dir, 'CHECKLIST.yaml'), [
+      'config:', '  base_url: "http://localhost:8080"',
+      'suites:', '  - id: suite-1', '    name: "Test"', '    tags: [smoke]', '    tests:',
+      '      - id: TC-001', '        name: "Test row"', '        tags: [smoke]',
+      '        setup:', stepYaml,
+      '        request:', '          method: GET', '          path: /api/v1/x',
+      '        expect:', '          status: 200', '          body_contains: ok', '',
+    ].join('\n'));
+    const script = path.join(__dirname, '..', 'skills', 'manual-test', 'scripts', 'lint-checklist.sh');
+    try {
+      execFileSync(script, [path.join(dir, 'CHECKLIST.yaml')], { encoding: 'utf8', stdio: 'pipe' });
+      return null;
+    } catch (e) { return e; }
+  };
+  for (const ok of [
+    '          - http: {method: POST, path: /login, expect_status: 401}',
+    '          - http: {method: POST, path: /login, expect_status: [400, 401]}',
+    '          - http: {method: POST, path: /login}\n            expect_status: any',
+  ]) {
+    assert.equal(lint(ok), null, `should lint clean: ${ok}`);
+  }
+  const bad = lint('          - http: {method: POST, path: /login, expect_status: banana}');
+  assert.ok(bad, 'a malformed expect_status exits non-zero');
+  assert.match(String(bad.stderr) + String(bad.stdout), /expect_status: invalid value 'banana'/);
+});
+
 test('REGRESSION sd-skeleton: merges ALL FR-prefix tables, not just the first', () => {
   // Pre-fix: `tableByIdPrefix` used tables.find() — an SRS whose FRs are split into
   // several sub-tables (one per module, a common real shape) harvested only the
