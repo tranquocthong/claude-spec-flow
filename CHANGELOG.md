@@ -2,6 +2,16 @@
 
 All notable changes to spec-flow. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags on `main`.
 
+## [0.14.0] — 2026-10-01
+
+### Changed
+
+- **The pre-ship code review is now off by default.** It was documented as optional, but the default `ask` left the decision to the orchestrating agent, which in practice ran it without asking. Now `config.phase.codeReview` absent, `null` or unreadable resolves to `off`: `review-scope` returns `gate: off`, and `/sf:phase` step 3b and `/sf:change` step 6 skip it without offering. `ask` and `always` still work and are the opt-in; `ask` now has to be a real `AskUserQuestion` prompt, and anything but an explicit yes (no answer, no prompt shown, auto-mode) counts as no. `init-project` seeds and back-fills `off`, and `/sf:phase` now says in plain words that nothing but `gate: ask|always` authorises a review. Projects whose config already says `ask` (an earlier back-fill wrote it) keep asking until the key is set to `off`.
+
+### Added
+
+- **`expect_status:` on `http` setup steps.** A setup step aborted the whole test on any status >= 400, so a case that has to fail on purpose before its assertion (a wrong OTP submitted 2-4 times to reach a lockout, each answered 401) could never get past setup, and a capture on such a step never ran. A step can now declare the status it is meant to get: an int, a list (`[400, 401]`) or `any`, nested in `http:` or beside it. Undeclared steps behave as before. A declared step still fails on any other status, so it cannot go green on a 200 or a 500, and `any` accepts every real response but not "no response". `lint-checklist.sh` rejects a malformed value before the run, using the same parser as the runner.
+
 ## [0.13.1] — 2026-09-25
 
 ### Fixed

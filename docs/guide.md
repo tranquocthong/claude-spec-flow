@@ -38,7 +38,7 @@ No SRS is the normal case. Run `/sf:ingest` bare and it asks about the actor, th
         |
    regression run       checklist-to-verification hook writes VERIFICATION.md
         |
-   code review          OPTIONAL gate, asks you yes/no first: an independent sub-agent
+   code review          OPTIONAL gate, off unless you enable it: an independent sub-agent
                         reviews the branch diff, review-collect writes CODE-REVIEW.md
                         critical/high halts the ship and hands you the decision
         |
@@ -106,7 +106,7 @@ For code written before you adopted spec-flow, do not retro-generate an SD. The 
 3. **`CHECKLIST.yaml` exists before the first task is implemented.**
 4. **`verify-code` runs before every smoke run.** Tests, coverage threshold, forbidden patterns, secret scan, driven by config. Unconfigured means skipped, not blocked.
 5. **`review` becomes `done` only after smoke passes.** A feature ships only when regression passes and `VERIFICATION.md` reads `status: passed`. A test that executed nothing is `notVerified`, and holds the status at `incomplete`.
-6. **The pre-ship code review is optional, but its verdict is not.** `config.phase.codeReview` decides whether it runs (`ask` by default, so you are asked once per ship). Skipping it is silent. Running it and finding critical or high issues halts the ship until you fix them or record the override with `review-accept`, and `/sf:status` keeps surfacing an unaccepted blocking verdict across sessions.
+6. **The pre-ship code review is optional, but its verdict is not.** `config.phase.codeReview` decides whether it runs (`off` by default: it never runs and never asks. Set `ask` to be asked once per ship, or `always` to run it every ship). Skipping it is silent. Running it and finding critical or high issues halts the ship until you fix them or record the override with `review-accept`, and `/sf:status` keeps surfacing an unaccepted blocking verdict across sessions.
 7. **The SD is the source of truth.** Change the SD, then propagate. Never patch code without patching the SD.
 
 ## What lands in your repo
@@ -233,7 +233,7 @@ Two CLIs ship in `bin/`. Both are zero-network and print one JSON line per call.
 | | `drift-check --feature` | error codes in code versus SD section 12.2, `spec-not-evidenced` and `impl-not-specced` |
 | Verify | `verify-collect --results` | runner output into `VERIFICATION.md` truths, `notVerified` holds status at `incomplete` |
 | | `verify-code [--feature] [--repos]` | tests, coverage, forbidden patterns, secret scan, scoped to the repos a feature touched |
-| Review | `review-scope [--feature]` | whether the optional pre-ship review runs (`config.phase.codeReview`: ask, always, off) and over what: base branch, `<base>...HEAD`, the files from `file-links.json`, plus any prior verdict and whether HEAD moved past it |
+| Review | `review-scope [--feature]` | whether the optional pre-ship review runs (`config.phase.codeReview`: off by default, or ask, always) and over what: base branch, `<base>...HEAD`, the files from `file-links.json`, plus any prior verdict and whether HEAD moved past it |
 | | `review-collect --feature --findings [--target]` | reviewer findings into `CODE-REVIEW.md`, verdict `clean`, `advisory` or `blocking` (any critical/high) |
 | | `review-accept --feature --note` | record that a human chose to ship with open blocking findings |
 | State | `state-update --feature [--note] [--shipped]` | refresh per-feature `STATE.md` plus the mirror |

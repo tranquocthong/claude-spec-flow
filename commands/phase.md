@@ -160,7 +160,9 @@ Deterministic per-FR complexity (1–10) — this is the **only** complexity sig
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs state-update --feature <feature> --note "phase complete — regression passed"
    ```
 
-3b. **Code review — OPTIONAL gate (`config.phase.codeReview`, default `ask`)**
+3b. **Code review — OPTIONAL gate (`config.phase.codeReview`, default `off`)**
+
+   **Opt-in. Do NOT run, offer, or suggest a code review unless `review-scope` returns `gate: ask` or `gate: always`.** Nothing else authorises it: not a clean regression, not a large diff, not your own judgement that a review "would be prudent". `verify-code` is a different, mandatory gate and does not count as a review.
 
    The executors that wrote this code cannot review it: they are inside their own reasoning. This step buys one **independent** pass over the finished diff, in a context that never wrote a line of it, right before the code leaves the branch.
 
@@ -170,9 +172,11 @@ Deterministic per-FR complexity (1–10) — this is the **only** complexity sig
    node ${CLAUDE_PLUGIN_ROOT}/bin/flow-tools.cjs review-scope --feature <feature>
    ```
    Returns `gate` · `model` · `range` (`<base>...HEAD`) · `files` (from `file-links.json`) · `repos` · `existing` · `stale`. Act on `gate`:
-   - **`off`** → skip to step 4. Say nothing.
-   - **`ask`** (default) → **ask the user yes/no, right now**: *"Run an independent code review before shipping `<feature>`? (~N files / `<range>`)"*. No → skip to step 4, and record nothing (an un-run review is not a clean one). Yes → run it.
-   - **`always`** → run it, no prompt.
+   - **`off`** (default, also when the key is absent or unreadable) → skip to step 4. Say nothing, ask nothing.
+   - **`ask`** (the project opted in) → **the question must actually reach the user, as an `AskUserQuestion` tool call** with two options, `Yes, run the review` and `No, skip it` (question: *"Run an independent code review before shipping `<feature>`? (~N files / `<range>`)"*). Writing the question in prose, or deciding on the user's behalf, is not asking.
+     - **Only an explicit `Yes, run the review` runs the review.** Every other outcome is **no**: `No`, a dismissed or empty answer, free text that is not a clear yes, the tool being unavailable, or a session running in auto-mode / unattended / non-interactive. Skip to step 4 and record nothing (an un-run review is not a clean one).
+     - Silence is never consent. If you cannot show the prompt, treat the gate as `off` for this ship.
+   - **`always`** (the project opted in) → run it, no prompt.
    - `existing` non-null and `stale: false` → that review already covers this exact HEAD. Re-use it; don't burn a second pass. `stale: true` → HEAD moved since; re-review.
 
    **Run it — one sub-agent, independent, read-only.** Spawn ONE agent with the `code-review` skill. **Model:** `review-scope → model` (default `sonnet`); non-null → pass as the Agent `model` param, else omit.
@@ -219,7 +223,7 @@ Deterministic per-FR complexity (1–10) — this is the **only** complexity sig
         ```
      3. **Abort** → stop; `/sf:status` keeps surfacing the blocking review.
 
-   This gate never invents a reason to skip itself: `gate: ask` + user says no is the only silent path, and `verify-code` / regression remain the hard gates either way.
+   This gate never invents a reason to run or to skip itself: `off`, and `ask` without an explicit yes, are the silent paths, and `verify-code` / regression remain the hard gates either way.
 
 4. **Ship** — **HARD GUARD (G3): do NOT ship unless `VERIFICATION.md` reads `status: passed`** (or `verified-adhoc` for an out-of-loop live verify). `failed` or missing → STOP, go back to the regression sweep. Once passed: stage, then invoke the bundled **commit** skill in `push` mode (`skills/commit`) — it writes the conventional-commit message, commits on the current `feat/<feature>` branch (it refuses to commit on the base branch when `branching.mode != off`), pushes, and surfaces the MR/PR link. Report the link.
    - **Tag the ship (G2):** `git tag -a <feature>-v<n> -m "<feature> shipped"` then `git push --tags` — a durable, greppable record that this SD reached a verified ship. Skip only if `branching.mode: off`.

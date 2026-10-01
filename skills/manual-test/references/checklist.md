@@ -89,6 +89,13 @@ is a hard assertion: on mismatch the setup aborts and the test FAILs instead of
 running against an unconfirmed baseline (in `teardown` it degrades to a warning).
 Dict `expect` stays descriptive, same rule as a `verify:` block.
 
+An `http` setup step aborts the test on any status >= 400. A setup that is *meant*
+to fail (e.g. submitting a wrong OTP two to four times to reach a lockout) declares
+the status it should get with `expect_status:` (nested in `http:` or beside it):
+an int (`401`), a list (`[400, 401]`) or `any`. A declared step passes only on that
+status, so it cannot go green on a 200 or 500; `any` accepts every real response but
+not "no response". Without it, behaviour is unchanged. `capture:` still runs.
+
 ## YAML Structure
 
 The canonical, runnable, fully-annotated example is **`templates/CHECKLIST.yaml`**

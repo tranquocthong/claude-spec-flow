@@ -7,6 +7,7 @@
 #   - request.path containing `{` (unresolved path templates from scaffolding)
 #   - Empty `tests:` array
 #   - `db_ref` / `base_url_ref` naming something not declared in config
+#   - a malformed `expect_status:` on an http step (int, list of ints, or "any")
 #
 # Exits 0 if checklist is clean, 1 otherwise with structured error list.
 #
@@ -34,7 +35,7 @@ fi
 CHECKLIST=$(resolve_checklist "$1") || exit 2
 
 # Use python for robust YAML parsing rather than regex
-python3 - "$CHECKLIST" <<'PY'
+python3 - "$CHECKLIST" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" <<'PY'
 import sys, re
 try:
     import yaml
@@ -82,6 +83,27 @@ def walk_sql_expect(node, where):
             walk_sql_expect(v, f"{where}[{i}]")
 
 walk_sql_expect(doc, "$")
+
+# `expect_status:` on an http step (setup / teardown). The runner rejects a malformed
+# value only when the step executes, i.e. half-way through a suite. Same grammar as
+# checklist_lib/setup.py's parse_expect_status: an int 100-599, a list of them, or "any".
+sys.path.insert(0, sys.argv[2])
+from checklist_lib.setup import parse_expect_status as _parse_expect_status  # noqa: E402
+def walk_expect_status(node, where):
+    if isinstance(node, dict):
+        if isinstance(node.get("http"), dict):
+            for holder, label in ((node["http"], "http"), (node, "")):
+                if "expect_status" in holder:
+                    v = holder["expect_status"]
+                    if _parse_expect_status(v) is None:
+                        issues.append(f"{where}.{label + '.' if label else ''}expect_status: invalid value {v!r} — use an int (e.g. 401), a list of ints (e.g. [400, 401]) or \"any\".")
+        for k, v in node.items():
+            walk_expect_status(v, f"{where}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            walk_expect_status(v, f"{where}[{i}]")
+
+walk_expect_status(doc, "$")
 
 # Undeclared db_ref / base_url_ref. Both fail the run anyway, but a typo'd ref that
 # only surfaces once the suite is half-executed wastes a full manual-test cycle.
